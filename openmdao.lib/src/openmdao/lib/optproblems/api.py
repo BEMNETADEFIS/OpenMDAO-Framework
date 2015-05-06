@@ -1,2 +1,4 @@
-from sellar import SellarProblem
+from sellar import SellarProblem, SellarProblemWithDeriv
 from branin import BraninProblem
+from scalable import UnitScalableProblem
+from polyscale import PolyScalableProblem

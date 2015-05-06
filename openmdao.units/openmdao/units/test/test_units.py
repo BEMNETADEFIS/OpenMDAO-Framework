@@ -1,6 +1,7 @@
 import openmdao.units as units
 import unittest
 import math
+import cStringIO
 
 from pkg_resources import resource_string, resource_stream
 
@@ -14,35 +15,72 @@ from pkg_resources import resource_string, resource_stream
 # the following class test each method in the NumberDict class
 
 class test_moduleLevelFunctions(unittest.TestCase):
+
     def tearDown(self):
         unitLib = resource_stream(units.__name__, 'unitLibdefault.ini')
         units.import_library(unitLib)
         
     def test_importlib(self):
         
-        #check to make sure the import fucntion errors if not all required base_units are there
-        unitLib_test_bad = resource_stream(units.__name__, 'test//unitLib_test_badbaseunits.ini')
+        #check to make sure the import function errors if not all
+        # required base_units are there
+        unitLib_test_bad = resource_stream(units.__name__,
+                                           'test/unitLib_test_badbaseunits.ini')
         try:
             units.import_library(unitLib_test_bad)
-        except ValueError,err:
-            self.assertEqual(str(err),"Not all required base type were present in the config file. missing: ['mass', 'time'], at least ['length', 'mass', 'time', 'temperature', 'angle'] required")
-        except:
+        except ValueError, err:
+            self.assertEqual(str(err),
+                             "Not all required base type were present in the"
+                             " config file. missing: ['mass', 'time'], at least"
+                             " ['length', 'mass', 'time', 'temperature',"
+                             " 'angle'] required")
+        else:
             self.fail("ValueError expected")
+
         #check to make sure that bad units in the units list cause an error    
-        unitLib_test_bad = resource_stream(units.__name__, 'test//unitLib_test_badunit.ini')
+        unitLib_test_bad = resource_stream(units.__name__,
+                                           'test/unitLib_test_badunit.ini')
         try:
             units.import_library(unitLib_test_bad)
-        except ValueError,err:
-            self.assertEqual(str(err),"The following units were not defined because they could not be resolved as a function of any other defined units:['foo']")
-        except:
+        except ValueError, err:
+            self.assertEqual(str(err),
+                             "The following units were not defined because"
+                             " they could not be resolved as a function of any"
+                             " other defined units:['foo']")
+        else:
             self.fail("ValueError expected")
             
-        
+    def test_update_library(self):
+        # Show no existing support.
+        x = units.PhysicalQuantity('1m/s')
+        try:
+            x.convert_to_unit('furlong/fortnight')
+        except ValueError, exc:
+            self.assertEqual(str(exc), "no unit named 'furlong' is defined")
+        else:
+            self.fail("ValueError expected")
+
+        # Update.
+        update = cStringIO.StringIO("""
+[units]
+furlong: 201.168*m, Horse racing
+fortnight: 14*d, Two weeks
+""")
+        units.update_library(update)
+
+        # Show supported.
+        x = units.PhysicalQuantity('1m/s')
+        x.convert_to_unit('furlong/fortnight')
+        self.assertAlmostEqual(x.value,
+                               units.PhysicalQuantity(
+                               '6012.884753furlong/fortnight').value, places=5)
+
+
 class test_NumberDict(unittest.TestCase):
 
     def test__UknownKeyGives0(self):
-        """a NumberDict instance should initilize using integer and non-integer indices
-        a NumberDict instance should initilize all entries with an initial value of 0"""
+        #a NumberDict instance should initilize using integer and non-integer indices
+        #a NumberDict instance should initilize all entries with an initial value of 0
         x=units.NumberDict()
         #integer test
         self.assertEqual(x[0],0)
@@ -50,8 +88,8 @@ class test_NumberDict(unittest.TestCase):
         self.assertEqual(x['t'],0)
         
     def test__add__KnownValues(self):
-        """__add__ should give known result with known input
-        for non-string data types, addition must be commutative"""
+        #__add__ should give known result with known input
+        #for non-string data types, addition must be commutative
         x=units.NumberDict()
         y=units.NumberDict()
         x['t1'],x['t2']= 1,2
@@ -61,8 +99,8 @@ class test_NumberDict(unittest.TestCase):
         self.assertEqual((3,3), (result2['t1'],result2['t2']))
 
     def test__sub__KnownValues(self):
-        """__sub__ should give known result with known input
-        commuting the input should result in equal magnitude, opposite sign"""
+        #__sub__ should give known result with known input
+        #commuting the input should result in equal magnitude, opposite sign
 
         x=units.NumberDict()
         y=units.NumberDict()
@@ -73,7 +111,7 @@ class test_NumberDict(unittest.TestCase):
         self.assertEqual((1,-1), (result2['t1'],result2['t2']))
 
     def test__mul__KnownValues(self):
-        """__mul__ should give known result with known input"""
+        #__mul__ should give known result with known input
         x=units.NumberDict([('t1',1),('t2',2)])
         y=10
         result1,result2=x*y,y*x
@@ -84,7 +122,7 @@ class test_NumberDict(unittest.TestCase):
 
 
     def test__div__KnownValues(self):
-        """__div__ should give known result with known input"""
+        #__div__ should give known result with known input
         x=units.NumberDict()
         x=units.NumberDict([('t1',1),('t2',2)])
         y=10.0
@@ -111,9 +149,9 @@ class test__PhysicalQuantity(unittest.TestCase):
         self.unitlib = units.import_library(unitLib)
         
     def test_init(self):
-        """__init__ should have the same result regardless of the 
-        constructor calling pattern
-        """    
+        #__init__ should have the same result regardless of the 
+        #constructor calling pattern
+           
  
         x=units.PhysicalQuantity('1m')
         y=units.PhysicalQuantity(1,'m')
@@ -145,15 +183,12 @@ class test__PhysicalQuantity(unittest.TestCase):
             self.fail("Expecting TypeError")            
 
     def test_str(self):
-        """__str__ """
         self.assertEqual(str(units.PhysicalQuantity('1 d')),"1.0 d")
 
     def test_repr(self):
-        """__repr__ """
         self.assertEqual(repr(units.PhysicalQuantity('1 d')),"PhysicalQuantity(1.0,'d')")
 
     def test_cmp(self):
-        """__cmp__ """
         x=units.PhysicalQuantity('1 d')
         y = units.PhysicalQuantity('2 d')
         self.assertEqual(cmp(x,y),-1)
@@ -181,25 +216,51 @@ class test__PhysicalQuantity(unittest.TestCase):
         except ValueError:
             self.fail("Error: Currency Unit (USD) is not working")
         
-    def test_hour_unit(self):
-        # Added to test problem in Ticket 466
+    def test_pi(self):
+        # Fixes issue 786
+        x = units.PhysicalQuantity('1rpm')
+        x.convert_to_unit('rad/min')
+        self.assertAlmostEqual(x.value,
+                               units.PhysicalQuantity('6.283185rad/min').value,
+                               places=3)
+        
+    def test_new_units(self):
+        # Hour added to test problem in Ticket 466
+        # knot, rev, month added to test problem in Issue 804
         x = units.PhysicalQuantity('7200s')
         x.convert_to_unit('h')
         self.assertEqual(x, units.PhysicalQuantity('2h'))
+        x = units.PhysicalQuantity('5knot')
+        x.convert_to_unit('nm/h')
+        self.assertEqual(x, units.PhysicalQuantity('5nmi/h'))
+        x = units.PhysicalQuantity('33rev/min')
+        x.convert_to_unit('rpm')
+        self.assertEqual(x, units.PhysicalQuantity('33rpm'))
+        x = units.PhysicalQuantity('12mo')
+        x.convert_to_unit('yr')
+        self.assertEqual(x, units.PhysicalQuantity('1yr'))
+        x = units.PhysicalQuantity('1Mibyte')
+        x.convert_to_unit('Kibyte')
+        self.assertEqual(x, units.PhysicalQuantity('1024Kibyte'))
         
     def test_prefix_plus_math(self):
-        # From an issue: m**2 converts find, but cm**2 does not.
+        # From an issue: m**2 converts fine, but cm**2 does not.
         
         x1 = units.convert_units(1.0, 'm**2', 'cm**2')
         self.assertEqual(x1, 10000.0)
         
+        
         # Let's make sure we can dclare some complicated units
-        x = units.PhysicalQuantity('7200nm**3/kPa*dl')
+        x = units.PhysicalQuantity('7200nm**3/kPa*dL')
+        
+        #from issue 825, make sure you can handle single characters before a /
+        x = units.PhysicalQuantity('1 g/kW')
+
         
     def test_add_known_Values(self):
-        """addition should give known result with known input. 
-        The resulting unit should be the same as the unit of the calling instance
-        The units of the results should be the same as the units of the calling instance"""
+        #addition should give known result with known input. 
+        #he resulting unit should be the same as the unit of the calling instance
+        #The units of the results should be the same as the units of the calling instance
         
         #test addition function for allowed addition values
         known_add_values=(('1m','5m',6),('1cm','1cm',2),('1cm','1ft',31.48))
@@ -240,9 +301,9 @@ class test__PhysicalQuantity(unittest.TestCase):
             
 
     def test_sub_known_Values(self):
-        """subtraction should give known result with known input
-        __rsub__ should give the negative of __sub__
-        the units of the results should be the same as the units of the calling instance"""
+        #subtraction should give known result with known input
+        #__rsub__ should give the negative of __sub__
+        #the units of the results should be the same as the units of the calling instance
         
         known_sub_Values=(('1m','5m',-4),('1cm','1cm',0),('1cm','5m',-499.0),('7km','1m',6.999))
         for q1,q2, sum in known_sub_Values:
@@ -282,8 +343,8 @@ class test__PhysicalQuantity(unittest.TestCase):
             
 
     def test_mul_known_Values(self):
-        """multiplication should give known result with known input
-        the unit of the product should be the product of the units"""
+        #multiplication should give known result with known input
+        #the unit of the product should be the product of the units
 
         #PhysicalQuanity * scalar
         x=units.PhysicalQuantity('1cm')
@@ -322,8 +383,8 @@ class test__PhysicalQuantity(unittest.TestCase):
     
 
     def test_div_known_Values(self):
-        """__div__ should give known result with known input"""
-        """the unit of the product should be the product of the units"""
+        #__div__ should give known result with known input
+        #the unit of the product should be the product of the units
         
         #scalar division
         x=units.PhysicalQuantity('1cm')
@@ -356,8 +417,8 @@ class test__PhysicalQuantity(unittest.TestCase):
         self.assertEqual(str(x/y),'0.6 cm/s')
         
     def test_pow_known_Values(self):
-        """__pow__ should give known result with known input
-        the unit of the power should be the power of the input units"""
+        #__pow__ should give known result with known input
+        #the unit of the power should be the power of the input units
         
         #test integer exponent
         x=units.PhysicalQuantity('5V')
@@ -402,7 +463,7 @@ class test__PhysicalQuantity(unittest.TestCase):
             self.fail("expected TypeError")            
         
     def test_abs_known_Values(self):
-        """__abs__ should give known result with known input"""
+        #__abs__ should give known result with known input
 
         x=units.PhysicalQuantity('-5V')
         self.assertEqual(abs(x).unit,x.unit)
@@ -413,7 +474,7 @@ class test__PhysicalQuantity(unittest.TestCase):
         self.assertEqual(abs(x).value,5)
 
     def test_pos_known_Values(self):
-        """should retain sign for value of physical quantity"""
+        #should retain sign for value of physical quantity
 
         x=units.PhysicalQuantity('5V')
         self.assertEqual((+x).value,5)
@@ -421,7 +482,7 @@ class test__PhysicalQuantity(unittest.TestCase):
         self.assertEqual((+x).value,-9.8)
 
     def test_neg_known_Values(self):
-        """__neg__ should flip sign of value for physical quantity"""
+        #__neg__ should flip sign of value for physical quantity
 
         x=units.PhysicalQuantity('5V')
         self.assertEqual((-x).value,-5)
@@ -429,14 +490,14 @@ class test__PhysicalQuantity(unittest.TestCase):
         self.assertEqual((-x).value,9.8)
 
     def test_sqrt_known_Values(self):
-        """__sqrt__ should give known result with known input"""
+        #__sqrt__ should give known result with known input
         
         x=units.PhysicalQuantity('5V')
         self.assertEqual((x*x).sqrt(),x)
 
     
     def test_sin_cos_tan_known_Values(self):
-        """__sin__ should give known result with known input"""
+        #__sin__ should give known result with known input
         
         x=units.PhysicalQuantity('0 rad')
         x.sin()
@@ -468,14 +529,13 @@ class test__PhysicalQuantity(unittest.TestCase):
         
 
     def test_nonzero(self):
-        """__nonzero__ should return true in a boolean test"""
+        #__nonzero__ should return true in a boolean test
         
         x=units.PhysicalQuantity('1degK')
         self.assertTrue(x)
 
     def test_convert_to_unit(self):
-        """convert_to_unit should change the unit of the calling instance to the requested new unit"""
-
+        #convert_to_unit should change the unit of the calling instance to the requested new unit
         x=units.PhysicalQuantity('5cm')
         x.convert_to_unit('m')
         self.assertEqual(x,units.PhysicalQuantity('0.05m'))
@@ -494,7 +554,7 @@ class test__PhysicalQuantity(unittest.TestCase):
         self.assertEqual(x,units.PhysicalQuantity('144.0psf'))
         
     def test_in_units_of(self):
-        """in_units_of should return a new PhysicalQuantity with the requested unit, leaving the old unit as it was"""
+        #in_units_of should return a new PhysicalQuantity with the requested unit, leaving the old unit as it was
 
         x=units.PhysicalQuantity('5cm')
         y = x.in_units_of('m')
@@ -511,8 +571,8 @@ class test__PhysicalQuantity(unittest.TestCase):
         
 
     def test_in_base_units(self):
-        """in_base_units() should return a new PhysicalQuantity instance
-        using the base units, leaving the original instance intact"""
+        #in_base_units() should return a new PhysicalQuantity instance
+        #using the base units, leaving the original instance intact
 
         x = units.PhysicalQuantity(1,'1/h')
         y = x.in_base_units()
@@ -534,7 +594,7 @@ class test__PhysicalQuantity(unittest.TestCase):
         self.assertEqual(x,units.PhysicalQuantity('5cm'))   
 
     def test__is_compatible__known__Values(self):
-        """is_compatible should return True for compatible units and False for incompatible ones"""
+        #is_compatible should return True for compatible units and False for incompatible ones
         
         testvals=(('5m','cm',True),('1s','ms',True),('1m','ms',False))
         for q1, q2, bool in testvals:
@@ -552,14 +612,14 @@ class test__PhysicalQuantity(unittest.TestCase):
 class test__PhysicalUnit(unittest.TestCase):
 
     def test_repr_str(self):
-        """__repr__should return a string which could be used to contruct the unit instance, __str__ should return a string with just the unit name for str"""
+        #__repr__should return a string which could be used to contruct the unit instance, __str__ should return a string with just the unit name for str
         u = units.PhysicalQuantity('1 d')
         self.assertEqual(repr(u.unit),
                          "PhysicalUnit({'d': 1},86400.0,%s,0.0)" % _get_powers(time=1))
         self.assertEqual(str(u.unit),"<PhysicalUnit d>")
 
     def test_cmp(self):
-        """should error for incompatible units, if they are compatible then it should cmp on their factors"""
+        #should error for incompatible units, if they are compatible then it should cmp on their factors
         x=units.PhysicalQuantity('1 d')
         y=units.PhysicalQuantity('1 s')
         z=units.PhysicalQuantity('1 ft')
@@ -577,7 +637,7 @@ class test__PhysicalUnit(unittest.TestCase):
 
     known__mul__Values=(('1m','5m',5),('1cm','1cm',1),('1cm','5m',5),('7km','1m',7))
     def test_multiply(self):
-        """multiplication should error for units with offsets"""
+        #multiplication should error for units with offsets
 
         x = units.PhysicalQuantity('1g')
         y = units.PhysicalQuantity('2s')
@@ -597,7 +657,7 @@ class test__PhysicalUnit(unittest.TestCase):
             self.fail("Expecting TypeError")
         
     def test_division(self):
-        """division should error when working with offset units"""
+        #division should error when working with offset units
         
         w = units.PhysicalQuantity('2kg')
         x = units.PhysicalQuantity('1g')
@@ -628,7 +688,7 @@ class test__PhysicalUnit(unittest.TestCase):
 
     known__pow__Values=(('1V',3),('1m',2),('1.1m',2))
     def test_pow(self):
-        """power should error for offest units and for non-integer powers"""
+        #power should error for offest units and for non-integer powers
 
         x = units.PhysicalQuantity('1m')
         y = units.PhysicalQuantity('1degF')
@@ -665,7 +725,7 @@ class test__PhysicalUnit(unittest.TestCase):
     known__conversion_factor_to__Values=(('1m','1cm',100),('1s','1ms',1000),('1ms','1s',0.001))
 
     def test_conversion_factor_to(self):
-        """conversion_factor_to should errror for units with different base power, should error for units with incompativle offset"""
+        #conversion_factor_to should errror for units with different base power, should error for units with incompativle offset
         
         w = units.PhysicalQuantity('1cm')
         x = units.PhysicalQuantity('1m')
@@ -692,7 +752,7 @@ class test__PhysicalUnit(unittest.TestCase):
     known__conversion_tuple_to__Values=(('1m','1s'),('1s','1degK'),('1ms','1rad'))
     
     def test_conversion_tuple_to(self):
-        """test_conversion_tuple_to shoudl error when units have different power lists"""
+        #test_conversion_tuple_to shoudl error when units have different power lists
 
         w = units.PhysicalQuantity('1cm')
         x = units.PhysicalQuantity('1m')
@@ -717,7 +777,7 @@ class test__PhysicalUnit(unittest.TestCase):
             self.fail("Expecting TypeError")
             
     def test_name(self):
-        """name should return a mathematically correct representation of the unit"""
+        #name should return a mathematically correct representation of the unit
         x1=units.PhysicalQuantity('1m')
         x2 = units.PhysicalQuantity('1kg')
         y=1/x1
@@ -730,7 +790,7 @@ class test__PhysicalUnit(unittest.TestCase):
         self.assertEqual(y.unit.name(),'kg/m**2')
 
 
-class test__moduleFunctions(unittest.TestCase):        
+class test__moduleFunctions(unittest.TestCase):
     def test_add_unit(self):
         try:
             units.add_unit('ft','20*m')

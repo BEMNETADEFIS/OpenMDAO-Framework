@@ -4,6 +4,7 @@ which support various operations such as creating objects, loading models via
 egg files, remote execution, and remote file access.
 """
 
+import atexit
 import logging
 import optparse
 import os.path
@@ -20,18 +21,23 @@ from multiprocessing import current_process
 from openmdao.main.component import SimulationRoot
 from openmdao.main.container import Container
 from openmdao.main.factory import Factory
-from openmdao.main.factorymanager import create, get_available_types
-from openmdao.main.filevar import RemoteFile
+from openmdao.main.factorymanager import create, get_available_types, \
+                                         get_signature
+from openmdao.main.file_supp import RemoteFile
 from openmdao.main.mp_support import OpenMDAO_Manager, OpenMDAO_Proxy, register
 from openmdao.main.mp_util import keytype, read_allowed_hosts, setup_tunnel, \
                                   read_server_config, write_server_config
 from openmdao.main.rbac import get_credentials, set_credentials, \
                                rbac, RoleError
+from openmdao.main.releaseinfo import __version__
 
 from openmdao.util.filexfer import pack_zipfile, unpack_zipfile
+from openmdao.util.log import install_remote_handler, remove_remote_handlers, \
+                              logging_port, LOG_DEBUG2
 from openmdao.util.publickey import make_private, read_authorized_keys, \
                                     write_authorized_keys, HAVE_PYWIN32
-from openmdao.util.shellproc import ShellProc, STDOUT
+from openmdao.util.shellproc import ShellProc, STDOUT, DEV_NULL
+from openmdao.util.fileutil import onerror
 
 _PROXIES = {}
 
@@ -42,7 +48,7 @@ class ObjServerFactory(Factory):
     within those servers.
 
     name: string
-        Name of factory, used in log messages, etc.
+        Name of factory; used in log messages, etc.
 
     authkey: string
         Passed to created :class:`ObjServer` servers.
@@ -59,7 +65,7 @@ class ObjServerFactory(Factory):
         same form of address.
 
     The environment variable ``OPENMDAO_KEEPDIRS`` can be used to avoid
-    having server directory trees removed when servers are shut-down.
+    having server directory trees removed when servers are shut down.
     """
 
     # These are used to propagate selections from main().
@@ -79,10 +85,12 @@ class ObjServerFactory(Factory):
         self._allowed_types = allowed_types or ObjServerFactory._allowed_types
         self._managers = {}
         self._logger = logging.getLogger(name)
+        self._logger.setLevel(logging.DEBUG)
         self._logger.info('PID: %d, %r, allow_shell %s', os.getpid(),
                           keytype(self._authkey), allow_shell)
         self.host = platform.node()
         self.pid = os.getpid()
+        self.version = __version__
         self.manager_class = _ServerManager
         self.server_classname = 'openmdao_main_objserverfactory_ObjServer'
 
@@ -92,8 +100,9 @@ class ObjServerFactory(Factory):
         Returns the :class:`ResourceAllocationManager` instance.
         Used by :meth:`ResourceAllocationManager.add_remotes`.
         """
+        self._logger.debug('get_ram')
         from openmdao.main.resource import ResourceAllocationManager
-        return ResourceAllocationManager.get_instance()
+        return ResourceAllocationManager._get_instance()
 
     @rbac('*')
     def echo(self, *args):
@@ -150,7 +159,7 @@ class ObjServerFactory(Factory):
         del self._managers[server]
         keep_dirs = int(os.environ.get('OPENMDAO_KEEPDIRS', '0'))
         if not keep_dirs and os.path.exists(root_dir):
-            shutil.rmtree(root_dir)
+            shutil.rmtree(root_dir, onerror=onerror)
 
     @rbac('owner')
     def cleanup(self):
@@ -170,15 +179,32 @@ class ObjServerFactory(Factory):
     @rbac('*')
     def get_available_types(self, groups=None):
         """
-        Returns a set of tuples of the form ``(typename, dist_version)``,
+        Returns a set of tuples of the form ``(typename, metadata)``,
         one for each available plugin type in the given entry point groups.
         If groups is *None,* return the set for all openmdao entry point groups.
         """
         self._logger.debug('get_available_types %s', groups)
         types = get_available_types(groups)
         for typname, version in types:
-            self._logger.debug('    %s %s', typname, version)
+            self._logger.log(LOG_DEBUG2, '    %s %s', typname, version)
         return types
+
+    @rbac(('owner', 'user'))
+    def get_signature(self, typname, version=None):
+        """Return constructor argument signature for *typname,* using the
+        specified package version. The return value is a dictionary.
+
+        typname: string
+            Type of object to constructor to inspect.
+
+        version: string or None
+            Version of `typname` to create.
+        """
+        self._logger.debug('get_signature typname %s version %s',
+                           typname, version)
+        signature = get_signature(typname, version)
+        self._logger.log(LOG_DEBUG2, '    %s', signature)
+        return signature
 
     @rbac(('owner', 'user'))
     def create(self, typname, version=None, server=None,
@@ -189,7 +215,7 @@ class ObjServerFactory(Factory):
         Starts servers in a subdirectory of the current directory.
 
         typname: string
-            Type of object to create. If null then a proxy for the new
+            Type of object to create. If null, then a proxy for the new
             :class:`ObjServer` is returned.
 
         version: string or None
@@ -200,7 +226,13 @@ class ObjServerFactory(Factory):
             If none, then a new server is created.
 
         res_desc: dict or None
-            Required resources. Currently not used.
+            Required resources. ``working_directory`` is used to set a
+            created server's directory, other keys are ignored.
+            If `allow_shell` has been set, then an absolute directory
+            reference may be used (including '~' expansion). If not, then
+            the reference must be relative and the working directory will be
+            relative to the factory's directory. If the directory already
+            exists, a new name will be used of the form ``<directory>_N``
 
         ctor_args: dict
             Other constructor arguments.
@@ -236,30 +268,52 @@ class ObjServerFactory(Factory):
 
             manager = self.manager_class(address, self._authkey, name=name,
                                          allowed_users=allowed_users)
-            root_dir = name
+
+            # Set (unique) working directory of server.
+            # Server cleanup removes this directory, so we avoid any
+            # existing directory to not delete existing files.
+            base = None
+            if res_desc is not None:
+                base = res_desc.get('working_directory')
+                if base:
+                    if self._allow_shell:  # Absolute allowed.
+                        base = os.path.expanduser(base)
+                    elif os.path.isabs(base) or base.startswith('..'):
+                        raise ValueError('working_directory %r must be subdirectory'
+                                         % base)
+                    res_desc = res_desc.copy()
+                    del res_desc['working_directory']
+            if not base:
+                base = name
             count = 1
+            root_dir = base
             while os.path.exists(root_dir):
                 count += 1
-                root_dir = '%s_%d' % (name, count)
+                root_dir = '%s_%d' % (base, count)
             os.mkdir(root_dir)
 
             # On Windows, when running the full test suite under Nose,
             # starting the process starts a new Nose test session, which
             # will eventually get here and start a new Nose session, which...
-            if sys.platform == 'win32' and \
-               sys.modules['__main__'].__file__.endswith('openmdao-script.py'):  #pragma no cover
-                orig_main = sys.modules['__main__'].__file__
-                sys.modules['__main__'].__file__ = \
-                    pkg_resources.resource_filename('openmdao.main',
-                                                    'objserverfactory.py')
-            else:
-                orig_main = None
-
+            orig_main = None
+            if sys.platform == 'win32':  #pragma no cover
+                scripts = ('openmdao-script.py', 'openmdao_test-script.py')
+                try:
+                    main_file = sys.modules['__main__'].__file__
+                except AttributeError:
+                    pass
+                else:
+                    if main_file.endswith(scripts):
+                        orig_main = main_file
+                        sys.modules['__main__'].__file__ = \
+                            pkg_resources.resource_filename('openmdao.main',
+                                                            'objserverfactory.py')
             owner = get_credentials()
-            self._logger.debug('%s starting server %r in dir %s',
-                               owner, name, root_dir)
+            self._logger.log(LOG_DEBUG2, '%s starting server %r in dir %s',
+                             owner, name, root_dir)
             try:
-                manager.start(cwd=root_dir)
+                manager.start(cwd=root_dir,
+                              log_level=self._logger.getEffectiveLevel())
             finally:
                 if orig_main is not None:  #pragma no cover
                     sys.modules['__main__'].__file__ = orig_main
@@ -277,7 +331,8 @@ class ObjServerFactory(Factory):
         else:
             obj = server
 
-        self._logger.debug('create returning %r at %r', obj, obj._token.address)
+        self._logger.log(LOG_DEBUG2, 'create returning %r at %r',
+                         obj, obj._token.address)
         return obj
 
 
@@ -289,7 +344,7 @@ class _FactoryManager(OpenMDAO_Manager):
 
 register(ObjServerFactory, _FactoryManager, 'openmdao.main.objserverfactory')
 
-    
+
 class ObjServer(object):
     """
     An object which knows how to create other objects, load a model, etc.
@@ -297,7 +352,7 @@ class ObjServer(object):
     directory at startup.
 
     name: string
-        Name of server, used in log messages, etc.
+        Name of server; used in log messages, etc.
 
     allow_shell: bool
         If True, :meth:`execute_command` and :meth:`load_model` are allowed.
@@ -319,6 +374,7 @@ class ObjServer(object):
         self.host = platform.node()
         self.pid = os.getpid()
         self.name = name or ('sim-%d' % self.pid)
+        self.version = __version__
 
         self._root_dir = os.getcwd()
         self._logger = logging.getLogger(self.name)
@@ -341,18 +397,25 @@ class ObjServer(object):
         except ImportError:
             pass
         else:
-            from enthought.traits.trait_numeric import AbstractArray
+            from traits.trait_numeric import AbstractArray
             dummy = AbstractArray()
 
-    # We only reset logging on the remote side.
-    def _reset_logging(self, filename='server.out'):  #pragma no cover
-        """ Reset stdout/stderr and logging after switching destination. """
-        sys.stdout = open(filename, 'w')
-        sys.stderr = sys.stdout
-        logging.root.handlers = []
-        logging.basicConfig(level=logging.NOTSET, datefmt='%b %d %H:%M:%S',
-            format='%(asctime)s %(levelname)s %(name)s: %(message)s',
-            filename='openmdao_log.txt', filemode='w')
+    @rbac(('owner', 'user'))
+    def set_log_level(self, level):
+        """ Set logging level to `level`. """
+        self._logger.info('log_level %s', level)
+        self._logger.setLevel(level)
+        logging.getLogger().setLevel(level)
+
+    @rbac('owner')
+    def config_ram(self, filename):
+        """
+        Configure the :class:`ResourceAllocationManager` instance from `filename`.
+        Used to define resources needed for model execution.
+        """
+        self._logger.debug('config_ram %r', filename)
+        from openmdao.main.resource import ResourceAllocationManager
+        ResourceAllocationManager.configure(filename)
 
     @rbac('*')
     def echo(self, *args):
@@ -370,12 +433,12 @@ class ObjServer(object):
         using the specified package version, server location, and resource
         description. All arguments are passed to :meth:`factorymanager.create`.
         """
-        self._logger.info('create typname %r, version %r server %s,'
-                          ' res_desc %s, args %s', typname, version, server,
-                          res_desc, ctor_args)
+        self._logger.debug('create typname %r, version %r server %s,'
+                           ' res_desc %s, args %s', typname, version, server,
+                           res_desc, ctor_args)
         if typname in self._allowed_types:
             obj = create(typname, version, server, res_desc, **ctor_args)
-            self._logger.info('    returning %s', obj)
+            self._logger.log(LOG_DEBUG2, '    returning %s', obj)
             return obj
         else:
             raise TypeError('%r is not an allowed type' % typname)
@@ -397,7 +460,8 @@ class ObjServer(object):
         If neither 'error_path' nor 'join_files' are specified,
         ``<remote_command>.stderr`` is used.
 
-        If specified, 'hard_run_duration_limit' is used as a timeout.
+        If specified in the 'resource_limits' dictionary, 'wallclock_time' is
+        used as a timeout.
 
         All other queuing resource keys are ignored.
 
@@ -412,8 +476,9 @@ class ObjServer(object):
         command = resource_desc['remote_command']
         self._check_path(command, 'execute_command')
         base = os.path.basename(command)
+        command = [command]
         if 'args' in resource_desc:
-            command = '%s %s' % (command, ' '.join(resource_desc['args']))
+            command.extend(resource_desc['args'])
 
         self._logger.debug('execute_command %s %r', job_name, command)
         if not self._allow_shell:
@@ -427,7 +492,7 @@ class ObjServer(object):
             stdin = resource_desc['input_path']
             self._check_path(stdin, 'execute_command')
         except KeyError:
-            stdin = 'nul:' if sys.platform == 'win32' else '/dev/null'
+            stdin = DEV_NULL
 
         try:
             stdout = resource_desc['output_path']
@@ -446,7 +511,8 @@ class ObjServer(object):
             else:
                 stderr = STDOUT if join_files else base+'.stderr'
 
-        timeout = resource_desc.get('hard_run_duration_limit', 0)
+        limits = resource_desc.get('resource_limits', {})
+        timeout = limits.get('wallclock_time', 0)
         poll_delay = 1
 
         try:
@@ -477,7 +543,7 @@ class ObjServer(object):
         self._check_path(egg_filename, 'load_model')
         if self.tlo:
             self.tlo.pre_delete()
-        self.tlo = Container.load_from_eggfile(egg_filename)
+        self.tlo = Container.load_from_eggfile(egg_filename, log=self._logger)
         return self.tlo
 
     @rbac('owner')
@@ -504,10 +570,10 @@ class ObjServer(object):
             Name of ZipFile to unpack.
 
         textfiles: list
-            List of :mod:`fnmatch` style patterns specifying which upnapcked
+            List of :mod:`fnmatch` style patterns specifying which unpacked
             files are text files possibly needing newline translation. If not
-            supplied, the first 4KB of each is scanned for a zero byte. If not
-            found then the file is assumed to be a text file.
+            supplied, the first 4KB of each is scanned for a zero byte. If none
+            is found, then the file is assumed to be a text file.
         """
         self._logger.debug('unpack_zipfile %r', filename)
         self._check_path(filename, 'unpack_zipfile')
@@ -576,7 +642,7 @@ class ObjServer(object):
             Name of file to open.
 
         mode: string
-            Accees mode.
+            Access mode.
 
         bufsize: int
             Size of buffer to use.
@@ -640,7 +706,7 @@ class _ServerManager(OpenMDAO_Manager):
 
 register(ObjServer, _ServerManager, 'openmdao.main.objserverfactory')
 
-    
+
 def connect_to_server(config_filename):
     """
     Connects to the the server specified by `config_filename` and returns a
@@ -657,11 +723,11 @@ def connect_to_server(config_filename):
 def connect(address, port, tunnel=False, authkey='PublicKey', pubkey=None,
             logfile=None):
     """
-    Connects to the the server at `address` and `port` using `key` and returns
+    Connects to the server at `address` and `port` using `key` and returns
     a (shared) proxy for the associated :class:`ObjServerFactory`.
 
     address: string
-        IP address for server, or pipe filename.
+        IP address for server or pipe filename.
 
     port: int
         Server port.  If < 0, `address` is a pipe filename.
@@ -673,7 +739,7 @@ def connect(address, port, tunnel=False, authkey='PublicKey', pubkey=None,
         Server authorization key.
 
     pubkey:
-        Server public key, required if `authkey` is 'PublicKey'.
+        Server public key; required if `authkey` is 'PublicKey'.
 
     logfile:
         Location of server's log file, if known.
@@ -685,8 +751,10 @@ def connect(address, port, tunnel=False, authkey='PublicKey', pubkey=None,
     try:
         return _PROXIES[key]
     except KeyError:
-        if tunnel:
-            location = setup_tunnel(address, port)
+        # Requires ssh setup.
+        if tunnel:  # pragma no cover
+            location, cleanup = setup_tunnel(address, port)
+            atexit.register(*cleanup)
         else:
             location = key
         via = ' (via tunnel)' if tunnel else ''
@@ -695,6 +763,7 @@ def connect(address, port, tunnel=False, authkey='PublicKey', pubkey=None,
             raise RuntimeError("Can't connect to server at %s:%s%s. It appears"
                                " to be offline. Please check the server log%s."
                                % (address, port, via, log))
+
         mgr = _FactoryManager(location, authkey, pubkey=pubkey)
         try:
             mgr.connect()
@@ -702,20 +771,25 @@ def connect(address, port, tunnel=False, authkey='PublicKey', pubkey=None,
             raise RuntimeError("Can't connect to server at %s:%s%s. It appears"
                                " to be rejecting the connection. Please check"
                                " the server log%s." % (address, port, via, log))
+
         proxy = mgr.openmdao_main_objserverfactory_ObjServerFactory()
+        if proxy.version != __version__:
+            logging.warning('Server version %r different than local version %r',
+                            proxy.version, __version__)
         _PROXIES[key] = proxy
         return proxy
 
 
 def start_server(authkey='PublicKey', address=None, port=0, prefix='server',
                  allowed_hosts=None, allowed_users=None, allow_shell=False,
-                 allowed_types=None, timeout=None, tunnel=False, resources=None):
+                 allowed_types=None, timeout=None, tunnel=False,
+                 resources=None, log_prefix=None):
     """
     Start an :class:`ObjServerFactory` service in a separate process
     in the current directory.
 
     authkey: string
-        Authorization key, must be matched by clients.
+        Authorization key; must be matched by clients.
 
     address: string
         IPv4 address, hostname, or pipe name.
@@ -758,6 +832,10 @@ def start_server(authkey='PublicKey', address=None, port=0, prefix='server',
 
     resources: string
         Filename for resource configuration.
+
+    log_prefix: string
+        Name used to identify remote remote logging messages from server.
+        Implies that the local process will be receiving the messages.
 
     Returns ``(server_proc, config_filename)``.
     """
@@ -823,6 +901,13 @@ def start_server(authkey='PublicKey', address=None, port=0, prefix='server',
             logging.warning("Can't make types.allow private")
         args.extend(['--types', 'types.allow'])
 
+    if log_prefix is not None:
+        log_host = socket.gethostname()
+        log_port = logging_port(log_host, log_host)
+        args.extend(['--log-host', log_host, '--log-port', str(log_port)])
+        if log_prefix:  # Could be null (for default).
+            args.extend(['--log-prefix', log_prefix])
+
     proc = ShellProc(args, stdout=server_out, stderr=STDOUT)
 
     try:
@@ -850,10 +935,10 @@ def start_server(authkey='PublicKey', address=None, port=0, prefix='server',
 def stop_server(server, config_filename):
     """
     Shutdown :class:`ObjServerFactory` specified by `config_filename` and
-    terminate it's process `server`.
+    terminate its process `server`.
 
     server: :class:`ShellProc`
-        Server process retured by :meth:`start_server`.
+        Server process returned by :meth:`start_server`.
 
     config_filename: string:
         Name of server configuration file.
@@ -871,7 +956,7 @@ def main():  #pragma no cover
     """
     OpenMDAO factory service process.
 
-    Usage: python objserverfactory.py [--allow-public][--allow-shell][--hosts=filename][--types=filename][--users=filename][--address=address][--port=number][--prefix=name][--tunnel][--resources=filename]
+    Usage: python objserverfactory.py [--allow-public][--allow-shell][--hosts=filename][--types=filename][--users=filename][--address=address][--port=number][--prefix=name][--tunnel][--resources=filename][--log-host=hostname][--log-port=number][--log-prefix=string]
 
     --allow-public:
         Allows access by anyone from any allowed host. Use with care!
@@ -927,8 +1012,17 @@ def main():  #pragma no cover
         Filename for resource configuration. If not specified then the
         default of ``~/.openmdao/resources.cfg`` will be used.
 
+    --log-host: string
+        Hostname to send remote log messages to.
+
+    --log-port: int
+        Port on `log-host` to send remote log messages to.
+
+    --log-prefix: string
+        Prefix to apply to remote log messages. Default is ``pid@host``.
+
     If ``prefix.key`` exists, it is read for an authorization key string.
-    Otherwise public key authorization and encryption is used.
+    Otherwise, public key authorization and encryption is used.
 
     Allowed hosts *must* be specified if `port` is >= 0. Only allowed hosts
     may connect to the server.
@@ -959,6 +1053,12 @@ def main():  #pragma no cover
                            ' from a local SSH tunnel')
     parser.add_option('--resources', action='store', type='str',
                       default=None, help='Filename for resource configuration')
+    parser.add_option('--log-host', action='store', type='str',
+                      default=None, help='hostname for remote log messages')
+    parser.add_option('--log-port', action='store', type='int',
+                      default=None, help='port for remote log messages')
+    parser.add_option('--log-prefix', action='store', type='str',
+                      default=None, help='prefix for remote log messages')
 
     options, arguments = parser.parse_args()
     if arguments:
@@ -967,6 +1067,9 @@ def main():  #pragma no cover
 
     logger = logging.getLogger()
     logger.setLevel(logging.DEBUG)
+    if options.log_host and options.log_port:
+        install_remote_handler(options.log_host, int(options.log_port),
+                               options.log_prefix)
 
     server_key = options.prefix+'.key'
     server_cfg = options.prefix+'.cfg'
@@ -1142,6 +1245,7 @@ def _sigterm_handler(signum, frame):  #pragma no cover
 
 def _cleanup():  #pragma no cover
     """ Cleanup in preparation to shut down. """
+    remove_remote_handlers()
     keep_dirs = int(os.environ.get('OPENMDAO_KEEPDIRS', '0'))
     if not keep_dirs and os.path.exists(_SERVER_CFG):
         os.remove(_SERVER_CFG)

@@ -7,9 +7,9 @@ Testing
 =======
 
 By default, your top level ``devenv/bin`` directory will contain a script
-called ``openmdao`` that has a subcommand called 'test' that uses a Python 
+called ``openmdao`` that has a subcommand called ``test`` that uses a Python 
 package called `nose
-<http://readthedocs.org/docs/nose/en/latest/>`_ to run all of the unit
+<http://nose.readthedocs.org/en/latest/>`_ to run all of the unit
 tests for any package that you specify. For example, to run the full set
 of openmdao unit tests, type:
 
@@ -44,6 +44,8 @@ available when using ``openmdao test``.
 
 .. index: test coverage
 
+Note that when you run the ``openmdao test`` script, some tests might fail if you do not have Internet
+access.
 
 Test Coverage
 -------------
@@ -134,7 +136,7 @@ Adding New Tests
 ----------------
 
 Generally, you should write your tests using Python's `unittest
-<http://docs.python.org/library/unittest.html>`_ framework if possible,
+<https://docs.python.org/2/library/unittest.html>`_ framework if possible,
 although the nose_ package is able to find and run tests that do not use
 unittest.
 
@@ -240,8 +242,8 @@ is a block of code as would be found in a Python script:
 
 .. testcode::
 
-    from openmdao.examples.enginedesign.engine import Engine
-    my_engine = Engine("new_engine")
+    from openmdao.examples.simple.paraboloid import Paraboloid
+    top = Paraboloid()
     
 The second type of code example is a copy of an interactive shell session:
 
@@ -312,7 +314,7 @@ The doctest blocks share their workspace in a similar manner as the testcode
 blocks.  Other options can be enabled for the doctest blocks, but
 so far the default ones have been fine.
 
-More details on using the doctest builder can be found here: http://sphinx.pocoo.org/ext/doctest.html
+More details on using the doctest builder can be found here: http://sphinx-doc.org/ext/doctest.html
 
 
 .. _Including-Code-Straight-from-the-Source:
@@ -326,7 +328,7 @@ block:
 
 ::
 
-    .. literalinclude:: ../../openmdao.examples/openmdao/examples/enginedesign/engine_wrap_c.py
+    .. literalinclude:: ../../contrib/enginedesign/openmdao.examples.enginedesign/openmdao/examples/enginedesign/engine_wrap_c.py
        :start-after: engine_weight = 0.0
        :end-before: # end engine.py
        :language: python
@@ -341,17 +343,19 @@ also be done with the *lines* option.
 
 ::
 
-    .. literalinclude:: ../../openmdao.examples/openmdao/examples/enginedesign/engine_wrap_c.py
+    .. literalinclude:: ../../contrib/enginedesign/openmdao.examples.enginedesign/openmdao/examples/enginedesign/engine_wrap_c.py
        :lines: 3,7-12,45
        :language: python
 
-More details on the ``literalinclude`` directive can be found at http://sphinx.pocoo.org/markup/code.html.       
+More details on the ``literalinclude`` directive can be found at http://sphinx-doc.org/markup/code.html.       
        
 *Helpful Tips*
 ++++++++++++++
 
 * Tracebacks don't have to be accurately reproduced (and they can't be
   anyway). Handle these by replacing the traceback with ellipses:
+
+::
 
     >>> my_engine.set("throttle",3.0)
     Traceback (most recent call last):
@@ -405,7 +409,7 @@ see output similar to the following:
 If any tests fail, they will be noted in this summary, and specific tracebacks
 will be given for each failure earlier in the output.
 
-.. note:: If you make changes to the docs, rebuild the documentation by running ``openmdao_build_docs``
-      and display them by typing ``openmdao_docs``.
+.. note:: If you change the docs, rebuild the documentation by running  ``openmdao build_docs`` and
+          display them by typing ``openmdao docs``.
 
 

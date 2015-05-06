@@ -4,6 +4,7 @@ import os.path
 import sys
 from math import isnan
 
+
 def assertRaisesError(test_case_instance, code, err_type, err_msg):
     """ Determine that `code` raises `err_type` with `err_msg`. """
     try:
@@ -53,7 +54,7 @@ def assert_raises(test_case, code, globals, locals, exception, msg,
 def assert_rel_error(test_case, actual, desired, tolerance):
     """
     Determine that the relative error between `actual` and `desired`
-    is within `tolerance`. If `desired` is zero then use absolute error.
+    is within `tolerance`. If `desired` is zero, then use absolute error.
 
     test_case: :class:`unittest.TestCase`
         TestCase instance used for assertions.
@@ -94,15 +95,30 @@ def assert_rel_error(test_case, actual, desired, tolerance):
                                ' tolerance %s' % (i, act, des, error, tolerance))
 
 
+def case_assert_rel_error(case1, case2, test_case, tolerance):
+    """Perform assert_rel_error when comparing two Case objects."""
+    for tup1, tup2 in zip(case1.items(flatten=True), case2.items(flatten=True)):
+        if tup1[0].endswith('itername') or tup2[0].endswith('itername'):
+            continue
+        if isinstance(tup1[1], float) and isinstance(tup2[1], float):
+            assert_rel_error(test_case, tup1[1], tup2[1], tolerance)
+        else:
+            test_case.fail("Case entry values (%s:%s, %s:%s) are not both floats"
+                           % (tup1[0], tup1[1], tup2[0], tup2[1]))
+        if tup1[0] != tup2[0]:
+            test_case.fail("Case entry names ('%s', '%s') don't match"
+                           % (tup1[0], tup2[0]))
+
+
 def find_python():
-    """ Return path to the OpenMDAO python command"""
+    """ Return path to the OpenMDAO Python command."""
     return sys.executable
 
 
 def make_protected_dir():
     """
     Returns the the absolute path of an inaccessible directory.
-    Files cannot be created in it, it can't be :meth:`os.chdir` to, etc.
+    Files cannot be created in it; it can't be :meth:`os.chdir` to, etc.
     Not supported on Windows.
     """
     directory = '__protected__'
@@ -111,5 +127,3 @@ def make_protected_dir():
     os.mkdir(directory)
     os.chmod(directory, 0)
     return os.path.join(os.getcwd(), directory)
-
-

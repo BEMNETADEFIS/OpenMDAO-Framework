@@ -2,29 +2,21 @@
 overfitting. Based on work from  `Python logistic regression
 <http://blog.smellthedata.com/2009/06/python-logistic-regression-with-l2.html>`_. 
 """
-import logging
-from random import seed
-try:
-    import numpy as np
-    from numpy import log
-    from scipy.optimize.optimize import fmin_bfgs
-except ImportError as err:
-    logging.warn("In %s: %r" % (__file__, err))
+import numpy as np
+from numpy import log
+from scipy.optimize.optimize import fmin_bfgs
 
-from enthought.traits.api import HasTraits
-
-from openmdao.lib.datatypes.api import Float, Bool
+from openmdao.main.datatypes.api import Float
+from openmdao.main.api import Container
 from openmdao.main.interfaces import implements, ISurrogate
-from openmdao.util.decorators import stub_if_missing_deps
 
 def sigmoid(x):
     return 1.0 / (1.0 + np.exp(-x))
 
-@stub_if_missing_deps('numpy', 'scipy')
-class LogisticRegression(HasTraits): 
+class LogisticRegression(Container): 
     implements(ISurrogate)
     
-    alpha = Float(.1,low=0,iotype='in',desc='L2 regularization strength')
+    alpha = Float(.1,low=0,iotype='in',desc='L2 regularization strength.')
     
     def __init__(self,X=None,Y=None,alpha=.1):
         
@@ -58,7 +50,7 @@ class LogisticRegression(HasTraits):
         return -1*l   
     
     def get_uncertain_value(self,value): 
-        """Returns the value iself. Logistic regressions don't have uncertainty"""
+        """Returns the value iself. Logistic regressions don't have uncertainty."""
         return value
             
     def train(self,X,Y):

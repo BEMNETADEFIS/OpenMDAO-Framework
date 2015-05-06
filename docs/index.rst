@@ -1,46 +1,57 @@
 ======================
-OpenMDAO Documentation
+OpenMDAO User Guide
 ======================
 
 Current version: |version|
 
-Contents:
+.. toctree::
+   :maxdepth: 2
+   
+   getting-started/index
+   basics/index
+   tutorials/index
+   concurrent
+   srcdocs/index
+   licenses/index
+
+=========================
+OpenMDAO Developer Guide
+=========================
+   
+.. toctree::
+   :maxdepth: 1
+   
+   dev-guide/index
+   plugin-guide/index
+   code-contribution-example
+   documenting/index
+   
+   
+==============================
+Appendix and Glossary
+==============================
 
 .. toctree::
    :maxdepth: 1
    
-   getting-started/index
-   simple/index
-   complex/index
-   surrogate/index
-   mdao/index
-   user-guide/index
-   srcdocs/index
-   plugin-guide/index
-   dev-guide/index
-   dev-checklist
-   licenses/index
-   documenting/index
-   
-   
-.. toctree::
-   :hidden:
-        
    units
-   arch-doc/index
-   geometry/index
    glossary
 
-Appendixes, Glossary, and Indexes
-==================================
-
-* :ref:`units`
-* :ref:`appendix`
-* :ref:`geometry`
-* :ref:`glossary`
-* :ref:`genindex`
-* :ref:`modindex`
-* :ref:`search`
+============================
+Doc TBD
+============================
    
-  
+.. toctree::
+   :hidden: 
+   
+   design-doc/index
+
+
+==============================
+Index
+==============================
+
+* :ref:`genindex`
+
+
 

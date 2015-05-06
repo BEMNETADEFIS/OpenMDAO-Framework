@@ -32,9 +32,7 @@ those that are more likely to be used by an expert user.
 
 For the simplest possible unconstrained optimization problem, NEWSUMT just needs
 an objective function and one or more decision variables (parameters.) The
-basic interface conforms to OpenMDAO's driver API, which is discussed in 
-:ref:`Driver-API`. This document covers how to assign design variables, constraints, and
-objectives.
+basic interface conforms to OpenMDAO's driver API.
 
 The OpenMDAO NEWSUMT driver can be imported from ``openmdao.lib.drivers.api``.
 
@@ -42,52 +40,51 @@ The OpenMDAO NEWSUMT driver can be imported from ``openmdao.lib.drivers.api``.
 
     from openmdao.lib.drivers.api import NEWSUMTdriver
 
-Typically, NEWSUMT will be used as a driver in the top level assembly, though it
-can be also used in a subassembly as part of a nested driver scheme. Using the
+Typically, NEWSUMT will be used as a driver in the top level assembly, although it
+can also be used in a subassembly as part of a nested driver scheme. Using the
 OpenMDAO script interface, a simple optimization problem can be set up as
 follows:
 
 .. testcode:: NEWSUMT_load
 
     from openmdao.main.api import Assembly
-    from openmdao.examples.enginedesign.vehicle import Vehicle
-    from openmdao.lib.drivers.api import CONMINdriver
-
-    class EngineOptimization(Assembly):
-        """ Top level assembly for optimizing a vehicle. """
-    
-        def __init__(self):
-            """ Creates a new Assembly for vehicle performance optimization."""
+    from openmdao.examples.simple.paraboloid import Paraboloid
+    from openmdao.lib.drivers.api import NEWSUMTdriver
+        
+    class Top(Assembly):
+        """Constrained optimization of the Paraboloid with whatever optimizer
+        we want."""
             
-            super(EngineOptimization, self).__init__()
-
-            # Create CONMIN Optimizer instance
+        def configure(self):
+            """ Creates a new Assembly containing a Paraboloid and an optimizer"""
+                
+            # Create Paraboloid component instances
+            self.add('comp', Paraboloid())
+        
+            # Create Optimizer instance
             self.add('driver', NEWSUMTdriver())
+                
+            # Driver process definition
+            self.driver.workflow.add('comp')
         
-            # Create Vehicle instance
-            self.add('vehicle', Vehicle())
-        
-            # add Vehicle to optimizer workflow
-            self.driver.workflow.add('vehicle')
-    
-            # CONMIN Flags
+            # Objective 
+            self.driver.add_objective('comp.f_xy')
+                
+            # Design Variables 
+            self.driver.add_parameter('comp.x', low=-50., high=50.)
+            self.driver.add_parameter('comp.y', low=-50., high=50.)
+
+            # NEWSUMT Flags
             self.driver.iprint = 0
             self.driver.itmax = 30
             
-            # CONMIN Objective 
-            self.driver.add_objective('vehicle.fuel_burn')
-        
-            # CONMIN Design Variables 
-            self.driver.add_parameter('vehicle.spark_angle', low=-50. , high=10.)
-            self.driver.add_parameter('vehicle.bore', low=65. , high=100.)
 
-This first section of code defines an assembly called EngineOptimization.
-This assembly contains a DrivingSim component and a NEWSUMTdriver, both of
+This first section of code defines an assembly called Top.
+This assembly contains a Paraboloid component and a NEWSUMTdriver, both of
 which are created and added inside the ``__init__`` function with ``add``. The
-DrivingSim component is also added to the driver's workflow. The objective
+Paraboloid component is also added to the driver's workflow. The objective
 function, design variables, constraints, and any NEWSUMT parameters are also
-assigned in the ``__init__`` function. The specific syntax for all of these is
-discussed in :ref:`Driver-API`.
+assigned in the ``__init__`` function.
 
 .. index:: gradients, Hessians
 
@@ -97,10 +94,9 @@ This section contains the basic parameters for NEWSUMT.
 
 The default behavior for NEWSUMT is to calculate its own gradients and Hessians
 of the objective and constraints using a first-order forward finite difference.
-The second derivatives are approximated from the first order differences. You
-can replace NEWSUMT's finite difference with OpenMDAO's built-in capability by
-inserting a differentiator into the Differentiator slot in the driver, as shown
-in :ref:`Calculating-Derivatives-with-Finite-Difference`.
+The second derivatives are approximated from the first order differences. Presently,
+OpenMDAO's built-in differentiation capability does not support second derivatives, so
+NEWSUMT's gradient and Hessian calculation is the only available option.
 
 If you want to use NEWSUMT for the finite difference calculation and want the
 same finite difference step size in all your variables, you can set the ``default_fd_stepsize``
@@ -109,8 +105,9 @@ parameter.
 .. testcode:: NEWSUMT_fd
     :hide:
     
-    from openmdao.examples.enginedesign.engine_optimization import EngineOptimization
-    self = EngineOptimization()
+    from openmdao.examples.simple.optimization_unconstrained import OptimizationUnconstrained
+    from openmdao.main.api import set_as_top
+    self = set_as_top(OptimizationUnconstrained())
     
 .. testcode:: NEWSUMT_fd
 
@@ -119,52 +116,49 @@ parameter.
 The default step size will be used for all parameters for which you have not
 set the ``fd_step`` attribute.
 
-When using NEWSUMT, if you have any linear constraints, it may be
-advantageous to specify them as such so that NEWSUMT can treat them
-differently. Use the integer array ``ilin`` to designate whether a constraint
-is linear. A value of 0 indicates that that constraint is non-linear, while a
-value of 1 indicates that that the constraint is linear. This parameter is
-optional, and when it is omitted, all constraints are assumed to be nonlinear.
+If your problem uses linear constraints, you can improve the efficiency of the
+optimization process by designating those that are linear functions of the design
+variables as follows:
 
-.. testcode:: NEWSUMT_show
+.. testcode:: NEWSUMT_fd
 
-    map(self.driver.add_constraint, ['vehicle.stroke < vehicle.bore',
-                               'vehicle.stroke * vehicle.bore > 1.0'])
-    self.driver.ilin_linear = [1, 0]
+    self.driver.add_constraint('paraboloid.x - paraboloid.y >= 15.0')
+    self.driver.add_constraint('paraboloid.x*paraboloid.y < 77.0', linear=True)
 
+Note that this method of specification replaces the use of the ``iln_linear`` flag.
 
 Similarly, NEWSUMT has a flag parameter to indicate whether the objective
 function is linear or nonlinear. Setting ``lobj`` to 1 indicates a linear
 objective function. Setting it to 0, which is the default value, indicates a
 nonlinear objective function.
 
-.. testcode:: NEWSUMT_show
+.. testcode:: NEWSUMT_fd
 
         self.driver.lobj = 0
 
-The ``jprint`` parameter can be used to display diagnostic
+The `iprint` parameter can be used to display diagnostic
 messages. These messages are currently sent to the standard
 output.
 
-.. testcode:: NEWSUMT_show
+.. testcode:: NEWSUMT_fd
 
-        self.driver.jprint = 0
+        self.driver.iprint = 0
 
-Higher positive values of ``jprint`` turn on the display of more levels of output, as summarized below.
+Higher positive values of `iprint` turn on the display of more levels of output, as summarized below.
 
 ===============  ========================================================
 Value            Result
 ===============  ========================================================
-``jprint = -1``  All output is suppressed, including warnings
+``iprint = 0``   All output is suppressed, including warnings
 ---------------  --------------------------------------------------------
-``jprint = 0``   Print initial and final designs only
+``iprint = 1``   Print initial and final designs only
 ---------------  --------------------------------------------------------
-``jprint = 1``   Print brief results of analysis for initial and final designs 
+``iprint = 2``   Print brief results of analysis for initial and final designs 
                  together with minimal intermediate information
 ---------------  --------------------------------------------------------
-``jprint = 2``   Detailed printing
+``iprint = 3``   Detailed printing
 ---------------  --------------------------------------------------------
-``jprint = 3``   Debugging printing
+``iprint = 4``   Debugging printing
 ===============  ========================================================
 
 
@@ -172,13 +166,14 @@ Value            Result
 
 NEWSUMT provides a variety of parameters to control the convergence criteria for an optimization.
 
-The maximum number of iterations is specified by setting the ``itmax`` parameter.
+The maximum number of iterations is specified by setting the `itmax` parameter.
 The default value is 10.
 
 .. testsetup:: NEWSUMT_show
     
-    from openmdao.examples.enginedesign.engine_optimization import EngineOptimization
-    self = EngineOptimization()
+    from openmdao.examples.simple.optimization_unconstrained import OptimizationUnconstrained
+    from openmdao.main.api import set_as_top
+    self = set_as_top(OptimizationUnconstrained())
 
 .. testcode:: NEWSUMT_show
 

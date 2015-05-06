@@ -3,7 +3,7 @@
 import unittest
 
 from openmdao.main.api import Assembly, Component, Driver, set_as_top
-from openmdao.lib.datatypes.api import Int, Event
+from openmdao.main.datatypes.api import Int, Event
 from openmdao.util.decorators import add_delegate
 from openmdao.main.hasevents import HasEvents
 
@@ -20,8 +20,8 @@ class MyDriver(Driver):
 
 
 class MyEvComp(Component):
-    doit = Event()
-    doit2 = Event()
+    doit = Event(desc='Do It!')
+    doit2 = Event(desc='Do It Again!')
     doit_count = Int(0, iotype='out')
     doit2_count = Int(0, iotype='out')
     some_int = Int(0, iotype='in')
@@ -45,16 +45,15 @@ class HasEventsTestCase(unittest.TestCase):
         
     def test_event(self):
         self.asm.run()
-        self.assertEqual(self.asm.comp1.exec_count, 1)
+        self.assertEqual(self.asm.comp1.exec_count, 3)
         self.assertEqual(self.asm.comp1.doit_count, 0)
         self.assertEqual(self.asm.comp1.doit2_count, 0)
         
         self.asm.comp1.exec_count = 0
-        self.asm.comp1.invalidate_deps()
         
         self.asm.driver.add_event('comp1.doit')
         self.asm.run()
-        self.assertEqual(self.asm.comp1.exec_count, 1)
+        self.assertEqual(self.asm.comp1.exec_count, 3)
         self.assertEqual(self.asm.comp1.doit_count, 3)
         self.assertEqual(self.asm.comp1.doit2_count, 0)
         
@@ -102,7 +101,7 @@ class HasEventsTestCase(unittest.TestCase):
         self.asm.driver.clear_events()
         events = self.asm.driver.get_events()
         self.assertEqual(events, [])
-        
+
 
 if __name__ == "__main__":
     unittest.main()

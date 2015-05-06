@@ -1,21 +1,18 @@
 
-from random import gauss, weibullvariate, uniform
+from random import gauss, weibullvariate, uniform, triangular
+
+from openmdao.main.interfaces import IUncertainVariable, implements
 
 try:
     # as of python2.7, gamma is in the math module (even though docs say it's new as of 3.2)
     from math import gamma
 except ImportError as err:
-    import logging
-    logging.warn("In %s: %r" % (__file__, err))
-    try:
-        from scipy.special import gamma
-    except ImportError as err:
-        logging.warn("In %s: %r" % (__file__, err))
+    from scipy.special import gamma
     
-from openmdao.util.decorators import stub_if_missing_deps
-
 class UncertainDistribution(object):
     """Base class for uncertain variables."""
+    
+    implements(IUncertainVariable)
     
     default_val_method = 'expected'
     
@@ -131,7 +128,7 @@ class TriangularDistribution(UncertainDistribution):
         
 class WeibullDistribution(UncertainDistribution):
     """An UncertainDistribution which represents a quantity with a 
-    weibull distribution of uncertainty.
+    Weibull distribution of uncertainty.
     
     alpha: float
        scale parameter
@@ -151,8 +148,4 @@ class WeibullDistribution(UncertainDistribution):
         
     def expected(self):
         return self.alpha*gamma(1.+1./self.beta)
-
-
-if 'gamma' not in globals():
-    WeibullDistribution = stub_if_missing_deps('scipy', 'math:gamma')(WeibullDistribution)
     

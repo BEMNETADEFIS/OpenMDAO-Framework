@@ -34,8 +34,7 @@ it is not always a viable option. To learn how to file-wrap in OpenMDAO, see
 :ref:`Building-a-Plugin-Using-a-File-Wrapper`.
 
 For the examples presented here, we assume that you are already familiar with the
-fundamentals of the OpenMDAO component API and also with creating Python components
-as outlined in the :ref:`A-More-Complex-Tutorial-Problem`.
+fundamentals of the OpenMDAO component API and also with creating Python components.
 
 .. index:: extension; creating with F2PY
 .. index:: F2PY
@@ -65,8 +64,7 @@ attractive feature of F2PY is its simplicity -- it can be learned quickly and us
 without understanding the details under the hood.
 
 While F2PY was developed for use with Fortran, it can also wrap C functions with almost as 
-much ease. An example of wrapping a C function with F2PY can be found in :ref:`Wrapping-an-External-Module-Using-F2PY`
-in the OpenMDAO Tutorial.
+much ease.
 
 To illustrate the creation of an OpenMDAO component from a Fortran function, we'll present a brief
 tutorial. The following instructions will help you locate the directory containing the pieces
@@ -76,7 +74,7 @@ If you have downloaded the latest release version from the website, you should f
 
 ::
 
-  openmdao-X.X.X/lib/python2.6/site-packages/openmdao.examples.bar3simulation-X.X.X-######.egg/openmdao/examples/bar3simulation
+  openmdao-X.X.X/lib/python2.7/site-packages/openmdao.examples.bar3simulation-X.X.X-######.egg/openmdao/examples/bar3simulation
 
 ``X.X.X`` is the current OpenMDAO version, and ``######`` is a string that contains the Python version and the
 Operating System description. This path will vary depending on your system and version, but there will be
@@ -100,7 +98,7 @@ for a three-bar truss with the following specific geometry:
 
 .. figure:: ThreeBar.jpg
    :align: center
-   :alt: Lines and errors showing the geometry of the 3-bar truss
+   :alt: Lines and arrows showing the geometry of the 3-bar truss
 
    The 3-Bar Truss Geometry
    
@@ -115,7 +113,7 @@ cross-sectional areas of the three bars that minimize the total weight of the st
 satisfying constraints on the bar stresses, the displacement of node 1, and the frequency of the
 first mode.
 
-The `F2PY Users Guide <http://cens.ioc.ee/projects/f2py2e/usersguide/index.html>`_ describes three
+The `F2PY Users Guide <https://sysbio.ioc.ee/projects/f2py2e/usersguide/index.html>`_ describes three
 ways to use F2PY to generate the Python-callable object. The "quick way" is to just run F2PY on the
 Fortran file, which produces a shared object containing a function (or functions) that can be
 called from Python. This works for the simplest case but breaks down when F2PY doesn't know which
@@ -124,14 +122,14 @@ input/output intent of each function in the signature file (extension ``.pyf``).
 "quick and smart way," the input/output intents are specified directly in the Fortran code as 
 comments.
 
-This example showcases the "quick and smart way." An example of the "smart way" can be found in 
-:ref:`Wrapping-an-External-Module-Using-F2PY`, where a signature file is included
-as part of the engine design tutorial. The "quick and smart way" should be fine for most cases,
-provided there are no objections to inserting new comments into your existing source code. For
-some cases, the extra flexibility of the signature file may be needed. One specific example
-is where you only want to expose one function from a Fortran file that contains
-several functions. In this case you can instruct F2PY to generate a signature file,
-after which you can edit it to your satisfaction.
+This example showcases the "quick and smart way." There is another "smart
+way" where the directives are included in a separate signature file. The
+"quick and smart way" should be fine for most cases, provided there are no
+objections to inserting new comments into your existing source code. For some
+cases, the extra flexibility of the signature file may be needed. One
+specific example is where you only want to expose one function from a Fortran
+file that contains several functions. In this case you can instruct F2PY to
+generate a signature file, after which you can edit it to your satisfaction.
 
 Subroutine ``runbar3truss`` has the following interface:
 
@@ -228,8 +226,22 @@ side.
 F2PY automatically generates a docstring for this function. This can be examined by
 opening OpenMDAO's local Python environment:
 
-    >>> from openmdao.examples.bar3simulation.bar3 import runbar3truss, forces
-    >>> print runbar3truss.__doc__
+.. testcode:: bar3_wrap
+
+    from openmdao.examples.bar3simulation.bar3 import runbar3truss, forces
+    print runbar3truss.__doc__
+
+.. testoutput:: bar3_wrap
+    :options: +ELLIPSIS
+
+    ...
+
+The auto generated docstring slightly differs depending on your version of numpy.
+
+Auto-generated docstring if Numpy older than 1.8.0
+
+:: 
+
     runbar3truss - Function signature:
       s1,s2,s3,u,v,ff,obj = runbar3truss(pvec,m0,a1,a2,a3,e,el,rho)
     Required arguments:
@@ -248,8 +260,36 @@ opening OpenMDAO's local Python environment:
       u : float
       v : float
       ff : float
-      obj : float		    
-    <BLANKLINE>    
+      obj : float
+
+Auto-generated docstring starting with Numpy 1.8.0
+
+::
+
+    s1,s2,s3,u,v,ff,obj = runbar3truss(pvec,m0,a1,a2,a3,e,el,rho)
+
+    Wrapper for ``runbar3truss``.
+
+    *Parameters*
+    
+    pvec : input rank-1 array('d') with bounds (2)
+    m0 : input float
+    a1 : input float
+    a2 : input float
+    a3 : input float
+    e : input float
+    el : input float
+    rho : input float
+
+    *Returns*
+    
+    s1 : float
+    s2 : float
+    s3 : float
+    u : float
+    v : float
+    ff : float
+    obj : float
 
 The docstring can be useful for figuring out the arguments and returns for the
 generated function. Most of the values passed here are floats, which
@@ -328,8 +368,7 @@ attempting to wrap your own C or C++ codes.
 
 The first step in creating a Python extension is to create the interface file for the C functions
 that are to be wrapped. The interface file is analogous to the signature file that F2PY uses, though
-its format is more like C. For example, consider the engine simulation as described in the :ref:`more
-complex tutorial <A-More-Complex-Tutorial-Problem>`. There is one function with inputs and outputs
+its format is more like C. There is one function with inputs and outputs
 effectively passed as arguments. The corresponding interface file would look like this:
 
 .. __: http://www.swig.org/tutorial.html
@@ -357,7 +396,7 @@ effectively passed as arguments. The corresponding interface file would look lik
                         double RPM, double Throttle, double thetastep, double Fuel_Density,
                         double *OUTPUT, double *OUTPUT, double *OUTPUT, double *OUTPUT);
 
-Notice that the variables ``Power, Torque, FuelBurn,`` and ``EngineWeight`` are 
+Notice that the variables `Power, Torque, FuelBurn,` and `EngineWeight` are 
 declared as outputs. Inputs don't have to be explicitly declared, although the keyword ``INPUT``
 should be used whenever a pointer is actually a single input value. If a variable
 functions as both an input and an output, use the keyword ``BOTH`` in the interface file.
@@ -376,8 +415,8 @@ steps look like this:
 
     swig -python engineC_SWIG.i
 
-    gcc -fPIC -c engineC.c -I/usr/local/include/python2.6
-    gcc -fPIC -c engineC_SWIG_wrap.c -I/usr/local/include/python2.6
+    gcc -fPIC -c engineC.c -I/usr/local/include/python2.7
+    gcc -fPIC -c engineC_SWIG_wrap.c -I/usr/local/include/python2.7
 
     gcc -shared engineC.o engineC_SWIG_wrap.o -lGLU -lGL -lX11 -lXext -lpthread /usr/lib64/libstdc++.so.6 -lm -o _engineC_SWIG_wrap.so
 

@@ -26,7 +26,7 @@ setup(name='openmdao.test',
         'License :: OSI Approved',
         'Natural Language :: English',
         'Operating System :: OS Independent',
-        'Programming Language :: Python :: 2.6',
+        'Programming Language :: Python :: 2.7',
         'Topic :: Scientific/Engineering',
       ],
       keywords='testing',
@@ -49,8 +49,10 @@ setup(name='openmdao.test',
       "openmdao.component": [
           'openmdao.test.execcomp.ExecComp = openmdao.test.execcomp:ExecComp'
           ],
-      "console_scripts": [
-          'openmdao_test = openmdao.test.testing:run_openmdao_suite_deprecated'
-          ]
+      "nose.plugins.0.10": [
+          'nosetimerplugin = openmdao.test.nosetimer:TestTimer',
+          'nosesummaryplugin = openmdao.test.testing:TestFailureSummary',
+          'noseearlyplugin = openmdao.test.early_report:EarlyTestInfo'
+          ],
       },
       )

@@ -26,8 +26,8 @@ produce the square root of a number.
         """ The Babylonians had a neat way of calculating square
         roots using Fixed Point Iteration"""
         
-        x = Float(1.0, iotype="in", doc="Input is x")
-        y = Float(iotype="out", doc="Output is y")
+        x = Float(1.0, iotype="in", desc="Input is x")
+        y = Float(iotype="out", desc="Output is y")
         
         def execute(self):
             """ Iterate to find the square root of 2, the Babylonian way:
@@ -47,12 +47,10 @@ like this.
     class SolutionAssembly(Assembly):
         """ Solves for the root of MIMOSystem. """
     
-        def __init__(self):
+        def configure(self):
             """ Creates a new Assembly with this problem
             the answer should be 1.4142.....
             """
-            
-            super(SolutionAssembly, self).__init__()    
             
             self.add('driver', FixedPointIterator())
             self.add('problem', Babylonian())
@@ -76,9 +74,9 @@ single-output method, so it is only valid to specify one constraint and one para
     1.4142...
 
 Two additional parameters control the FixedPointIterator. The
-parameter ``tolerance`` sets the convergence tolerance for the comparison
+parameter `tolerance` sets the convergence tolerance for the comparison
 between value of ``x_out`` at the current iteration and the previous iteration.
-The default value for ``tolerance`` is 0.00001. The parameter ``max_iteration``
+The default value for `tolerance` is 0.001. The parameter ``max_iteration``
 specifies the number of iterations to run. The default value for
 ``max_iterations`` is 25.
 

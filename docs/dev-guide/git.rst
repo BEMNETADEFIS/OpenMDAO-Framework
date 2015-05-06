@@ -3,7 +3,7 @@
 .. _Helpful-Git-Commands:
 
 
-Appendix A: Helpful Git Commands
+Appendix: Helpful Git Commands
 ===================================
 
 This section contains commands that developers would use on a regular basis
@@ -21,7 +21,7 @@ tasks you will be doing.
 
 References:
 
-* Pro Git: http://progit.org/book/
+* Pro Git: http://git-scm.com/book/en/v2
 
 .. index Git commands
 

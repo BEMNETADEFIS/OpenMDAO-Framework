@@ -7,6 +7,7 @@ but in an unobservable manner as far as test coverage is concerned.
 import logging
 import os.path
 import shutil
+import socket
 import sys
 import time
 import unittest
@@ -14,8 +15,11 @@ import nose
 
 from openmdao.main.component import SimulationRoot
 from openmdao.main.objserverfactory import ObjServerFactory, ObjServer, \
-                                           start_server
+                                           start_server, stop_server, \
+                                           connect_to_server, _PROXIES
+from openmdao.main.resource import ResourceAllocationManager as RAM
 from openmdao.util.testutil import assert_raises
+from openmdao.util.fileutil import onerror
 
 
 class TestCase(unittest.TestCase):
@@ -27,7 +31,7 @@ class TestCase(unittest.TestCase):
 
         testdir = 'test_factory'
         if os.path.exists(testdir):
-            shutil.rmtree(testdir)
+            shutil.rmtree(testdir, onerror=onerror)
         os.mkdir(testdir)
         os.chdir(testdir)
 
@@ -49,10 +53,36 @@ class TestCase(unittest.TestCase):
             # Create a component.
             exec_comp = factory.create('openmdao.test.execcomp.ExecComp')
             exec_comp.run()
+            directory = 'Server_1'+os.sep
+            if sys.platform == 'win32':
+                directory = directory.lower()
+            self.assertTrue(exec_comp.get_abs_directory().endswith(directory))
+
+            # Create another in specified directory.
+            exec_comp = factory.create('openmdao.test.execcomp.ExecComp',
+                                       res_desc={'working_directory': 'floyd'})
+            exec_comp.run()
+            directory = 'floyd'+os.sep
+            if sys.platform == 'win32':
+                directory = directory.lower()
+            self.assertTrue(exec_comp.get_abs_directory().endswith(directory))
+
+            # Start server, connect, stop.
+            server, cfg = start_server()
+            proxy = connect_to_server(cfg)
+            shutil.copy(cfg, 'saved_cfg')
+            stop_server(server, cfg)
+
+            _PROXIES.clear()
+            assert_raises(self, "connect_to_server('saved_cfg')",
+                          globals(), locals(), RuntimeError,
+                          "Can't connect to server at ")
 
             # Force failed factory server startup via invalid port.
-            assert_raises(self, "start_server(port='xyzzy')",
-                          globals(), locals(), RuntimeError,
+            address = socket.gethostbyname(socket.gethostname())
+            code = "start_server(address=address, port='xyzzy'," \
+                                 " allow_shell=True, tunnel=True, resources='')"
+            assert_raises(self, code, globals(), locals(), RuntimeError,
                           'Server startup failed')
 
             # Try to release a server that doesn't exist (release takes an
@@ -60,6 +90,11 @@ class TestCase(unittest.TestCase):
             assert_raises(self, "factory.release('xyzzy')",
                           globals(), locals(), ValueError,
                           "can't identify server at 'not-a-proxy'")
+
+            # get_ram() is used by RAM.add_remotes().
+            ram = factory.get_ram()
+            self.assertTrue(ram is RAM._get_instance())
+
         finally:
             if factory is not None:
                 factory.cleanup()
@@ -68,15 +103,15 @@ class TestCase(unittest.TestCase):
                 time.sleep(2)  # Wait for process shutdown.
             keep_dirs = int(os.environ.get('OPENMDAO_KEEPDIRS', '0'))
             if not keep_dirs:
-                shutil.rmtree(testdir)
+                shutil.rmtree(testdir, onerror=onerror)
 
     def test_server(self):
         logging.debug('')
         logging.debug('test_server')
-        
+
         testdir = 'test_server'
         if os.path.exists(testdir):
-            shutil.rmtree(testdir)
+            shutil.rmtree(testdir, onerror=onerror)
         os.mkdir(testdir)
         os.chdir(testdir)
 
@@ -135,7 +170,7 @@ class TestCase(unittest.TestCase):
             else:
                 msg = "[Errno 2] No such file or directory: 'no-such-file'"
             assert_raises(self, "server.chmod('no-such-file', 0400)",
-                          globals(), locals(), OSError, msg) 
+                          globals(), locals(), OSError, msg)
 
             # Get stats.
             info = server.stat('zipped')
@@ -181,17 +216,29 @@ class TestCase(unittest.TestCase):
             else:
                 self.fail('Expected TypeError')
 
+            # isdir().
+            self.assertTrue(server.isdir('.'))
+
+            # listdir().
+            self.assertEqual(sorted(server.listdir('.')),
+                             [egg_info[0], 'fred', 'xyzzy', 'zipped'])
+            if sys.platform == 'win32':
+                msg = "[Error 3] The system cannot find the path specified: '42/*.*'"
+            else:
+                msg = "[Errno 2] No such file or directory: '42'"
+            assert_raises(self, "server.listdir('42')",
+                          globals(), locals(), OSError, msg)
         finally:
             SimulationRoot.chroot('..')
-            shutil.rmtree(testdir)
+            shutil.rmtree(testdir, onerror=onerror)
 
     def test_shell(self):
         logging.debug('')
         logging.debug('test_shell')
-        
+
         testdir = 'test_shell'
         if os.path.exists(testdir):
-            shutil.rmtree(testdir)
+            shutil.rmtree(testdir, onerror=onerror)
         os.mkdir(testdir)
         os.chdir(testdir)
 
@@ -200,20 +247,32 @@ class TestCase(unittest.TestCase):
             server = ObjServer(allow_shell=True)
 
             # Execute a command.
-            cmd = 'dir' if sys.platform == 'win32' else 'ls'
+            if sys.platform == 'win32':
+                cmd = 'cmd'
+                args = ['/c', 'dir']
+            else:
+                cmd = 'ls'
+                args = []
             rdesc = {'remote_command': cmd,
-                     'output_path': 'cmd.out',
-                     'hard_runtime_limit': 10}
+                     'args': args,
+                     'output_path': 'cmd.out'}
             return_code, error_msg = server.execute_command(rdesc)
             self.assertEqual(return_code, 0)
 
-            # Non-zero return code.
+            # Bad command, specify lots of resources.
+            with open('stdin1', 'w') as out:
+                out.write('z')
             rdesc = {'remote_command': 'no-such-command',
-                     'output_path': 'stdout1',
+                     'args': ['a', 'b', 'c'],
+                     'input_path': 'stdin1',
                      'error_path': 'stderr1',
-                     'hard_runtime_limit': 10}
-            return_code, error_msg = server.execute_command(rdesc)
-            self.assertNotEqual(return_code, 0)
+                     'wallclock_time': 10}
+            if sys.platform == 'win32':
+                msg = '[Error 2] The system cannot find the file specified'
+            else:
+                msg = '[Errno 2] No such file or directory'
+            assert_raises(self, 'server.execute_command(rdesc)',
+                          globals(), locals(), OSError, msg)
 
             # Load a model.
             exec_comp = server.create('openmdao.test.execcomp.ExecComp')
@@ -227,11 +286,10 @@ class TestCase(unittest.TestCase):
                           "'no-such-egg' not found.")
         finally:
             SimulationRoot.chroot('..')
-            shutil.rmtree(testdir)
+            shutil.rmtree(testdir, onerror=onerror)
 
 
 if __name__ == '__main__':
     sys.argv.append('--cover-package=openmdao.main')
     sys.argv.append('--cover-erase')
     nose.runmodule()
-

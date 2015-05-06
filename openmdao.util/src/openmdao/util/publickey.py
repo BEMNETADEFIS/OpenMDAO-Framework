@@ -22,6 +22,7 @@ from Crypto.Util.number import bytes_to_long
 if sys.platform == 'win32':  #pragma no cover
     try:
         import win32api
+        import win32con
         import win32security
         import ntsecuritycon
     except ImportError:
@@ -255,12 +256,12 @@ def is_private(path):
             return False  # No way to know.
 
         # Find the SIDs for user and system.
-        username = win32api.GetUserName()
+        username = win32api.GetUserNameEx(win32con.NameSamCompatible)
 
         # Map Cygwin 'root' to 'Administrator'. Typically these are intended
         # to be identical, but /etc/passwd might configure them differently.
-        if username == 'root':
-            username = 'Administrator'
+        if username.endswith('\\root'):
+            username = username.replace('\\root', '\\Administrator')
         user, domain, type = win32security.LookupAccountName('', username)
         system, domain, type = win32security.LookupAccountName('', 'System')
 
@@ -268,6 +269,9 @@ def is_private(path):
         sd = win32security.GetFileSecurity(path,
                                         win32security.DACL_SECURITY_INFORMATION)
         dacl = sd.GetSecurityDescriptorDacl()
+        if dacl is None:
+            logging.warning('is_private: No DACL for %r', path)
+            return False  # Happened on a user's XP system.
 
         # Verify the DACL contains just the two entries we expect.
         count = dacl.GetAceCount()
@@ -299,12 +303,12 @@ def make_private(path):
             raise ImportError('No pywin32')
 
         # Find the SIDs for user and system.
-        username = win32api.GetUserName()
+        username = win32api.GetUserNameEx(win32con.NameSamCompatible)
 
         # Map Cygwin 'root' to 'Administrator'. Typically these are intended
         # to be identical, but /etc/passwd might configure them differently.
-        if username == 'root':
-            username = 'Administrator'
+        if username.endswith('\\root'):
+            username = username.replace('\\root', '\\Administrator')
         user, domain, type = win32security.LookupAccountName('', username)
         system, domain, type = win32security.LookupAccountName('', 'System')
 
@@ -326,8 +330,25 @@ def make_private(path):
                                       win32security.DACL_SECURITY_INFORMATION,
                                       sd)
     else:
-        mode = 0700 if os.path.isdir(path) else 0600
-        os.chmod(path, mode)  # Read/Write/Execute
+        # Normal chmod() works on test machines with ACLs enabled, but a user
+        # in the field reported a situation where it didn't. This code tries
+        # using libacl if it can. Doesn't seem to cause any problems, not
+        # verifed that it helps though.
+        try:
+            # From pylibacl, which requires 'libacl1-dev'.
+            import posix1e
+        except ImportError:
+            mode = 0700 if os.path.isdir(path) else 0600
+            os.chmod(path, mode)  # Read/Write/Execute
+        else:
+            if os.path.isdir(path):
+                acl = posix1e.ACL(text='u::rwx,g::-,o::-')
+            else:
+                acl = posix1e.ACL(text='u::rw,g::-,o::-')
+            acl.applyto(path)
+
+    if not is_private(path):
+        raise RuntimeError("Can't make %r private" % path)
 
 
 def encode_public_key(key):
@@ -391,16 +412,16 @@ def read_authorized_keys(filename=None, logger=None):
             if not line:
                 continue
 
-            fields = line.split()
-            if len(fields) != 3:
-                logger.error('bad line (require exactly 3 fields):')
-                logger.error(line)
+            key_type, blank, rest = line.partition(' ')
+            if key_type != 'ssh-rsa':
+                logger.error('unsupported key type: %r', key_type)
                 errors += 1
                 continue
 
-            key_type, key_data, user_host = fields
-            if key_type != 'ssh-rsa':
-                logger.error('unsupported key type: %r', key_type)
+            key_data, blank, user_host = rest.partition(' ')
+            if not key_data:
+                logger.error('bad line (missing key data):')
+                logger.error(line)
                 errors += 1
                 continue
 
@@ -416,10 +437,8 @@ def read_authorized_keys(filename=None, logger=None):
             try:
                 ip_addr = socket.gethostbyname(host)
             except socket.gaierror:
-                logger.error('unknown host %r', host)
-                logger.error(line)
-                errors += 1
-                continue
+                logger.warning('unknown host %r', host)
+                logger.warning(line)
 
             data = base64.b64decode(key_data)
             start = 0

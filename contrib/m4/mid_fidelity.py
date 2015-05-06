@@ -8,7 +8,7 @@ and was written by someone without much 'mool' knowledge.
 __all__ = ('MidFidelity',)
 
 
-from openmdao.lib.datatypes.api import Float, Int, Array, Str, Slot
+from openmdao.main.datatypes.api import Float, Int, Array, Str, Slot
 
 import mool.Optimization.MidFiModel
 
@@ -53,8 +53,7 @@ class MidFidelity(Assembly):
                          ref_name='hifi_results', ref_parent='midfi_model')
     
     #name='M4_MidFi', 
-    def __init__(self, *args, **kwargs):
-        super(MidFidelity, self).__init__(*args, **kwargs)
+    def configure(self):
         self.need_updated_corrections = True
 
         self.input_mappings = []

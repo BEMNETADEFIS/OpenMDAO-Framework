@@ -11,7 +11,7 @@ __all__ = ('DOE',)
 import mool.Optimization.DOE
 
 from openmdao.main.api import Case, ListCaseIterator
-from openmdao.lib.datatypes.api import Int, Str
+from openmdao.main.datatypes.api import Int, Str
 from openmdao.lib.drivers.caseiterdriver import CaseIteratorDriver
 
 
@@ -24,8 +24,8 @@ class DOE(CaseIteratorDriver):
     lhs = Int(value=2, low=1, iotype='in',
                 desc='???, used by LHS and Rand_LHS.')
 
-    def __init__(self, *args, **kwargs):
-        super(DOE, self).__init__(*args, **kwargs)
+    def __init__(self):
+        super(DOE, self).__init__()
         self.design_variables = []    # List of (name, min, max) tuples.
         self.response_variables = []  # List of names.
 

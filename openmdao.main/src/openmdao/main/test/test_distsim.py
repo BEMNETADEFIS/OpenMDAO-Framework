@@ -3,24 +3,24 @@ Test distributed simulation.
 """
 
 import cPickle
-import glob
 import hashlib
 import logging
 from math import pi
-from multiprocessing import AuthenticationError, current_process
+from multiprocessing import AuthenticationError
 from multiprocessing.managers import RemoteError
 import os
 import shutil
 import socket
 import sys
 import traceback
+import tempfile
 import unittest
-import nose
 
 from Crypto.Random import get_random_bytes
 
-from openmdao.main.api import Assembly, Case, Component, Container, Driver, \
-                              set_as_top
+from traits.api import CTrait
+
+from openmdao.main.api import Assembly, Component, Container, Driver, set_as_top
 from openmdao.main.container import get_closest_proxy
 from openmdao.main.hasobjective import HasObjectives
 from openmdao.main.hasparameters import HasParameters
@@ -31,14 +31,15 @@ from openmdao.main.objserverfactory import connect, start_server, RemoteFile
 from openmdao.main.rbac import Credentials, get_credentials, set_credentials, \
                                AccessController, RoleError, rbac
 
-from openmdao.lib.datatypes.api import Float, Int
-from openmdao.lib.casehandlers.listcaserecorder import ListCaseRecorder
+from openmdao.main.datatypes.api import Float, Int, FileRef
+from openmdao.lib.casehandlers.api import ListCaseRecorder
 
 from openmdao.test.execcomp import ExecComp
 
 from openmdao.util.decorators import add_delegate
 from openmdao.util.publickey import get_key_pair
 from openmdao.util.testutil import assert_raises, assert_rel_error
+from openmdao.util.fileutil import onerror
 
 
 # Used for naming classes we want to create instances of.
@@ -46,7 +47,6 @@ _MODULE = 'openmdao.main.test.test_distsim'
 
 # Used for naming server directories.
 _SERVER_ID = 0
-
 
 
 class Box(ExecComp):
@@ -94,7 +94,6 @@ class Box(ExecComp):
         return self.parent.xyzzy()
 
 
-
 class HollowSphere(Component):
     """ Simple component for testing. """
 
@@ -107,8 +106,8 @@ class HollowSphere(Component):
     surface_area = Float(iotype='out', units='cm**2')
     pid = Int(iotype='out')
 
-    def __init__(self, doc=None, directory=''):
-        super(HollowSphere, self).__init__(doc, directory) 
+    def __init__(self):
+        super(HollowSphere, self).__init__()
         self.pid = os.getpid()
 
     def execute(self):
@@ -123,31 +122,16 @@ class HollowSphere(Component):
 class BoxDriver(Driver):
     """ Just drives :class:`Box` inputs and records results. """
 
-    def __init__(self):
-        super(BoxDriver, self).__init__()
-        self.recorders = [ListCaseRecorder()]
-
     def execute(self):
         """ Runs with various box parameter values. """
         for width in range(1, 2):
             for height in range(1, 3):
                 for depth in range(1, 4):
                     self._logger.debug('w,h,d %s, %s, %s', width, height, depth)
-                    self.set_parameters((width, height, depth))
-                    self.workflow.run()
+                    self.set_parameters((float(width), float(height), float(depth)))
+                    self.run_iteration()
                     volume, area = self.eval_objectives()
                     self._logger.debug('    v,a %s, %s', volume, area)
-
-                    case = Case()
-                    case.inputs = [('width', None, width),
-                                   ('height', None, height),
-                                   ('depth', None, depth)]
-                    case.outputs = [('volume', None, volume),
-                                    ('area', None, area),
-                                    ('pid', None, self.parent.box.pid)]
-                                   # Just to show access to remote from driver.
-                    for recorder in self.recorders:
-                        recorder.record(case)
 
 
 class BoxSource(ExecComp):
@@ -160,6 +144,7 @@ class BoxSource(ExecComp):
         # For get_closest_proxy().
         sub = self.add('subcontainer', Container())
         sub.add('subvar', Int())
+
 
 class BoxSink(ExecComp):
     """ Just a pass-through for :class:`BoxDriver` result values. """
@@ -174,6 +159,8 @@ class Model(Assembly):
 
     def __init__(self, box):
         super(Model, self).__init__()
+        self.recorders = [ListCaseRecorder()]
+
         self.add('driver', BoxDriver())
         self.driver.workflow.add(self.add('source', BoxSource()).name)
         self.driver.workflow.add(self.add('box', box).name)
@@ -190,8 +177,8 @@ class Model(Assembly):
         self.connect('box.volume',       'sink.volume_in')
         self.connect('box.surface_area', 'sink.area_in')
 
-        self.driver.add_objective('sink.volume_out')
-        self.driver.add_objective('sink.area_out')
+        self.driver.add_objective('sink.volume_out', 'volume')
+        self.driver.add_objective('sink.area_out', 'area')
 
     @rbac('owner', proxy_types=[RemoteFile])
     def open(self, path, mode):
@@ -243,31 +230,29 @@ class ProtectedBox(Box):
     def get_access_controller(self):
         return self.protector
 
-    @rbac(('owner', 'user'))
-    def get(self, path, index=None):
+    @rbac(('owner', 'user'), proxy_types=[FileRef])
+    def get(self, path):
         if self.protector.user_attribute(self, path):
-            return super(ProtectedBox, self).get(path, index)
-        raise RoleError("No get access to '%s' by role '%s'" % (attr, role))
+            return super(ProtectedBox, self).get(path)
+        raise RoleError('No get access to %r' % path)
 
-    @rbac(('owner', 'user'))
-    def get_dyn_trait(self, name, iotype=None):
+    @rbac(('owner', 'user'), proxy_types=[CTrait])
+    def get_dyn_trait(self, name, iotype=None, trait=None):
         if self.protector.user_attribute(self, name):
-            return super(ProtectedBox, self).get_dyn_trait(name, iotype)
-        raise RoleError("No get access to '%s' by role '%s'" % (attr, role))
+            return super(ProtectedBox, self).get_dyn_trait(name, iotype, trait)
+        raise RoleError('No get_dyn_trait access to %r' % name)
 
     @rbac(('owner', 'user'))
-    def get_wrapped_attr(self, name):
+    def get_attr_w_copy(self, name):
         if self.protector.user_attribute(self, name):
-            return super(ProtectedBox, self).get_wrapped_attr(name)
-        raise RoleError("No get_wrapped_attr access to '%s' by role '%s'"
-                        % (attr, role))
+            return super(ProtectedBox, self).get_attr(name)
+        raise RoleError('No get_attr_w_copy access to %r' % name)
 
     @rbac(('owner', 'user'))
-    def set(self, path, value, index=None, srcname=None, force=False):
+    def set(self, path, value):
         if self.protector.user_attribute(self, path):
-            return super(ProtectedBox, self).set(path, value, index, srcname, force)
-        raise RoleError("No set access to '%s' by role '%s'"
-                        % (attr, role))
+            return super(ProtectedBox, self).set(path, value)
+        raise RoleError('No set access to %r' % path)
 
 
 class TestCase(unittest.TestCase):
@@ -283,16 +268,19 @@ class TestCase(unittest.TestCase):
 
     def setUp(self):
         """ Called before each test. """
-        self.n_errors = len(self.test_result.errors)
-        self.n_failures = len(self.test_result.failures)
+        self.startdir = os.getcwd()
+        self.tempdir = tempfile.mkdtemp(prefix='omdao-')
+        os.chdir(self.tempdir)
+        # self.n_errors = len(self.test_result.errors)
+        # self.n_failures = len(self.test_result.failures)
 
         self.factories = []
         self.servers = []
         self.server_dirs = []
 
-        # Ensure we control directory cleanup.
-        self.keepdirs = os.environ.get('OPENMDAO_KEEPDIRS', '0')
-        os.environ['OPENMDAO_KEEPDIRS'] = '1'
+        # # Ensure we control directory cleanup.
+        # self.keepdirs = os.environ.get('OPENMDAO_KEEPDIRS', '0')
+        # os.environ['OPENMDAO_KEEPDIRS'] = '1'
 
     def start_factory(self, port=None, allowed_users=None):
         """ Start each factory process in a unique directory. """
@@ -301,7 +289,7 @@ class TestCase(unittest.TestCase):
 
         server_dir = 'Factory_%d' % _SERVER_ID
         if os.path.exists(server_dir):
-            shutil.rmtree(server_dir)
+            shutil.rmtree(server_dir, onerror=onerror)
         os.mkdir(server_dir)
         os.chdir(server_dir)
         self.server_dirs.append(server_dir)
@@ -324,7 +312,8 @@ class TestCase(unittest.TestCase):
 
             server, server_cfg = start_server(port=port,
                                               allowed_users=allowed_users,
-                                              allowed_types=allowed_types)
+                                              allowed_types=allowed_types,
+                                              log_prefix=server_dir)
             self.servers.append(server)
             cfg = read_server_config(server_cfg)
             self.address = cfg['address']
@@ -345,21 +334,28 @@ class TestCase(unittest.TestCase):
 
     def tearDown(self):
         """ Shut down server process. """
-        try:
-            for factory in self.factories:
-                factory.cleanup()
-            for server in self.servers:
-                logging.debug('terminating server pid %s', server.pid)
-                server.terminate(timeout=10)
+        #try:
+        for factory in self.factories:
+            factory.cleanup()
+        for server in self.servers:
+            logging.debug('terminating server pid %s', server.pid)
+            server.terminate(timeout=10)
 
-            # Cleanup only if there weren't any new errors or failures.
-            if len(self.test_result.errors) == self.n_errors and \
-               len(self.test_result.failures) == self.n_failures and \
-               not int(self.keepdirs):
-                for server_dir in self.server_dirs:
-                    shutil.rmtree(server_dir)
-        finally:
-            os.environ['OPENMDAO_KEEPDIRS'] = self.keepdirs
+        os.chdir(self.startdir)
+        if not os.environ.get('OPENMDAO_KEEPDIRS', False):
+            try:
+                shutil.rmtree(self.tempdir)
+            except OSError:
+                pass
+
+        # # Cleanup only if there weren't any new errors or failures.
+        # if len(self.test_result.errors) == self.n_errors and \
+        #    len(self.test_result.failures) == self.n_failures and \
+        #    not int(self.keepdirs):
+        #     for server_dir in self.server_dirs:
+        #         shutil.rmtree(server_dir, onerror=onerror)
+        # finally:
+        #     os.environ['OPENMDAO_KEEPDIRS'] = self.keepdirs
 
     def test_1_client(self):
         logging.debug('')
@@ -394,9 +390,14 @@ class TestCase(unittest.TestCase):
         assert_rel_error(self, obj.get('solid_volume'), 2.5766295747, 0.000001)
         assert_rel_error(self, obj.get('surface_area'), 50.265482457, 0.000001)
 
-        msg = ": Variable 'radius' must be a float in the range (0.0, "
-        assert_raises(self, "obj.set('radius', -1)", globals(), locals(),
-                      ValueError, msg)
+        try:
+            obj.set('radius', -1)
+        except RemoteError as exc:
+            fragment = ": Variable 'radius' must be a float in the range (0.0, "
+            if fragment not in str(exc):
+                self.fail('%s not found in %s' % (fragment, exc))
+        else:
+            self.fail('Expected RemoteError')
 
         # Now a Box, accessed via attribute methods.
         obj = factory.create(_MODULE+'.Box')
@@ -441,8 +442,9 @@ class TestCase(unittest.TestCase):
         for width in range(1, 2):
             for height in range(1, 3):
                 for depth in range(1, 4):
-                    case = model.driver.recorders[0].cases.pop(0)
-                    self.assertEqual(case.outputs[0][2], width*height*depth)
+                    case = model.recorders[0].cases.pop(0)
+                    self.assertEqual(case.get_output('volume'),
+                                     width*height*depth)
 
         self.assertTrue(is_instance(model.box.parent, Assembly))
         self.assertTrue(has_interface(model.box.parent, IComponent))
@@ -458,12 +460,12 @@ class TestCase(unittest.TestCase):
         self.assertEqual(path, 'subcontainer.subvar')
 
         obj, path = get_closest_proxy(model, 'source.subcontainer.subvar')
-        self.assertEqual(obj, model.source.subcontainer)
-        self.assertEqual(path, 'subvar')
+        self.assertEqual(obj, model.source.subcontainer.subvar)
+        self.assertEqual(path, '')
 
         obj, path = get_closest_proxy(model.source.subcontainer, 'subvar')
-        self.assertEqual(obj, model.source.subcontainer)
-        self.assertEqual(path, 'subvar')
+        self.assertEqual(obj, model.source.subcontainer.subvar)
+        self.assertEqual(path, '')
 
         # Observable proxied type.
         tmp = model.box.open_in_parent('tmp', 'w')
@@ -475,7 +477,7 @@ class TestCase(unittest.TestCase):
         try:
             box.cause_parent_error1()
         except RemoteError as exc:
-            msg = "AttributeError: attribute 'no_such_variable' of"
+            msg = "AttributeError: 'Model' object has no attribute 'no_such_variable'"
             logging.debug('msg: %s', msg)
             logging.debug('exc: %s', exc)
             self.assertTrue(msg in str(exc))
@@ -509,7 +511,7 @@ class TestCase(unittest.TestCase):
         # This 'spook' creation is only for testing.
         # Normally the protector would run with regular credentials
         # in effect at the proprietary site.
-        user = 'spooky@'+socket.gethostname()
+        user = 'i am a spy@'+socket.gethostname()
         key_pair = get_key_pair(user)
         data = '\n'.join([user, '0', key_pair.publickey().exportKey()])
         hash = hashlib.sha256(data).digest()
@@ -535,8 +537,9 @@ class TestCase(unittest.TestCase):
         for width in range(1, 2):
             for height in range(1, 3):
                 for depth in range(1, 4):
-                    case = model.driver.recorders[0].cases.pop(0)
-                    self.assertEqual(case.outputs[0][2], width*height*depth)
+                    case = model.recorders[0].cases.pop(0)
+                    self.assertEqual(case.get_output('volume'),
+                                     width*height*depth)
 
         # Check access protections.
         try:
@@ -581,7 +584,7 @@ class TestCase(unittest.TestCase):
         authkey = 'password'
         server_dir = 'Factory_authkey'
         if os.path.exists(server_dir):
-            shutil.rmtree(server_dir)
+            shutil.rmtree(server_dir, onerror=onerror)
         os.mkdir(server_dir)
         os.chdir(server_dir)
         self.server_dirs.append(server_dir)
@@ -620,8 +623,9 @@ class TestCase(unittest.TestCase):
             for width in range(1, 2):
                 for height in range(1, 3):
                     for depth in range(1, 4):
-                        case = model.driver.recorders[0].cases.pop(0)
-                        self.assertEqual(case.outputs[0][2], width*height*depth)
+                        case = model.recorders[0].cases.pop(0)
+                        self.assertEqual(case.get_output('volume'),
+                                         width*height*depth)
         finally:
             if factory is not None:
                 factory.cleanup()
@@ -664,6 +668,8 @@ class TestCase(unittest.TestCase):
         except RuntimeError as exc:
             if str(exc)[:len(msg1)] != msg1 and str(exc)[:len(msg2)] != msg2:
                 self.fail('Expected send/connect error, got %r' % exc)
+        except EOFError: # this can happen when testing concurrently
+            pass
         else:
             self.fail('Expected RuntimeError')
 
@@ -706,7 +712,9 @@ class TestCase(unittest.TestCase):
 
 
 if __name__ == '__main__':
-    sys.argv.append('--cover-package=openmdao.main')
-    sys.argv.append('--cover-erase')
+    logging.getLogger().setLevel(logging.DEBUG)
+    #unittest.main()
+    #sys.argv.append('--cover-package=openmdao.main')
+    #sys.argv.append('--cover-erase')
+    import nose
     nose.runmodule()
-

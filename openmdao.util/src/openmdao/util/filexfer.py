@@ -7,7 +7,8 @@ import zipfile
 from openmdao.util.log import NullLogger
 
 
-def filexfer(src_server, src_path, dst_server, dst_path, mode=''):
+def filexfer(src_server, src_path, dst_server, dst_path, mode='',
+             set_permissions=True):
     """
     Transfer a file from one place to another.
 
@@ -33,6 +34,9 @@ def filexfer(src_server, src_path, dst_server, dst_path, mode=''):
 
     mode: string
         Mode settings for :func:`open`, not including 'r' or 'w'.
+
+    set_permissions: bool
+        If ``True`` then permissions of `src_path` are set on `dst_path`.
     """
     if src_server is None:
         src_file = open(src_path, 'r'+mode)
@@ -60,17 +64,18 @@ def filexfer(src_server, src_path, dst_server, dst_path, mode=''):
     finally:
         src_file.close()
 
-    if src_server is None:
-        mode = os.stat(src_path).st_mode
-    else:
-        mode = src_server.stat(src_path).st_mode
-    if dst_server is None:
-        os.chmod(dst_path, mode)
-    else:
-        dst_server.chmod(dst_path, mode)
+    if set_permissions:
+        if src_server is None:
+            mode = os.stat(src_path).st_mode
+        else:
+            mode = src_server.stat(src_path).st_mode
+        if dst_server is None:
+            os.chmod(dst_path, mode)
+        else:
+            dst_server.chmod(dst_path, mode)
 
 
-def pack_zipfile(patterns, filename, logger=NullLogger):
+def pack_zipfile(patterns, filename, logger=None):
     """
     Create 'zip' file `filename` of files in `patterns`.
     Returns ``(nfiles, nbytes)``.
@@ -83,11 +88,25 @@ def pack_zipfile(patterns, filename, logger=NullLogger):
 
     logger: Logger
         Used for recording progress.
+
+    .. note::
+        The code uses :meth:`glob.glob` to process `patterns`.
+        It does not check for the existence of any matches.
+
     """
+    logger = logger or NullLogger()
+
+    # Scan to see if we have to use zip64 flag.
+    nbytes = 0
+    for pattern in patterns:
+        for path in glob.glob(pattern):
+            nbytes += os.path.getsize(path)
+    zip64 = nbytes > zipfile.ZIP64_LIMIT
+    compression = zipfile.ZIP_DEFLATED
+
     nfiles = 0
     nbytes = 0
-    zipped = zipfile.ZipFile(filename, 'w')
-    try:
+    with zipfile.ZipFile(filename, 'w', compression, zip64) as zipped:
         for pattern in patterns:
             for path in glob.glob(pattern):
                 size = os.path.getsize(path)
@@ -95,12 +114,11 @@ def pack_zipfile(patterns, filename, logger=NullLogger):
                 zipped.write(path)
                 nfiles += 1
                 nbytes += size
-    finally:
-        zipped.close()
+
     return (nfiles, nbytes)
 
 
-def unpack_zipfile(filename, logger=NullLogger, textfiles=None):
+def unpack_zipfile(filename, logger=None, textfiles=None):
     """
     Unpack 'zip' file `filename`.
     Returns ``(nfiles, nbytes)``.
@@ -112,24 +130,32 @@ def unpack_zipfile(filename, logger=NullLogger, textfiles=None):
         Used for recording progress.
 
     textfiles: list
-        List of :mod:`fnmatch` style patterns specifying which upnapcked files
+        List of :mod:`fnmatch` style patterns specifying which unpacked files
         are text files possibly needing newline translation. If not supplied,
-        the first 4KB of each is scanned for a zero byte. If not found then the
+        the first 4KB of each is scanned for a zero byte. If none is found, then the
         file is assumed to be a text file.
     """
+    logger = logger or NullLogger()
+
     # ZipInfo.create_system code for local system.
     local_system = 0 if sys.platform == 'win32' else 3
 
     nfiles = 0
     nbytes = 0
-    zipped = zipfile.ZipFile(filename, 'r')
-    try:
+    with zipfile.ZipFile(filename, 'r') as zipped:
         for info in zipped.infolist():
-            filename = info.filename
-            size = info.file_size
+            filename, size = info.filename, info.file_size
             logger.debug('unpacking %r (%d)...', filename, size)
             zipped.extract(info)
-            if info.create_system != local_system:
+
+            if sys.platform != 'win32':
+                # Set permissions, extract() doesn't.
+                rwx = (info.external_attr >> 16) & 0777
+                if rwx:
+                    os.chmod(filename, rwx)  # Only if something valid.
+
+            # Requires mismatched systems.
+            if info.create_system != local_system:  # pragma no cover
                 if textfiles is None:
                     with open(filename, 'rb') as inp:
                         data = inp.read(1 << 12)
@@ -143,8 +169,7 @@ def unpack_zipfile(filename, logger=NullLogger, textfiles=None):
                             translate_newlines(filename)
             nfiles += 1
             nbytes += size
-    finally:
-        zipped.close()
+
     return (nfiles, nbytes)
 
 

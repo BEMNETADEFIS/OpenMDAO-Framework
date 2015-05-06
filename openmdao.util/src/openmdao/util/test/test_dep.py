@@ -2,30 +2,35 @@
 Test Dependency Functions
 """
 
-import os, sys
+import os
 import unittest
 from nose import SkipTest
 
-from openmdao.util.dep import PythonSourceFileAnalyser, PythonSourceTreeAnalyser
+from openmdao.util.dep import PythonSourceTreeAnalyser
 
 class DepTestCase(unittest.TestCase):
 
-    def test_PythonSourceTreeAnalyser(self):
+    def setUp(self):
         try:
-            import openmdao.main
-            import openmdao.lib
+            # on windows, if we just do 'import openmdao.main and import openmdao.lib', 
+            # we get errors like 'module has no attribute "main".  Importing specific'
+            # files within main and lib fixes it.
+            from openmdao.main import component
+            from openmdao.lib import releaseinfo
         except ImportError:
             # don't perform this test if openmdao.main 
             # and openmdao.lib aren't present
             raise SkipTest("this test requires openmdao.main and openmdao.lib")
+        self.startdirs = [os.path.dirname(component.__file__), 
+                          os.path.dirname(releaseinfo.__file__)]
         
-        def exclude_tests(pname):
-            parts = pname.split(os.sep)
-            return 'test' in parts
-        
-        startdirs = [os.path.dirname(openmdao.main.__file__), 
-                     os.path.dirname(openmdao.lib.__file__)]
-        psta = PythonSourceTreeAnalyser(startdirs, exclude_tests)
+    def test_PythonSourceTreeAnalyser(self):
+       
+        skipdirs = set(['test', 'docs', 'examples', 'optproblems',
+                        'build', 'dist'])
+
+        psta = PythonSourceTreeAnalyser(self.startdirs, 
+                                        direxclude=lambda d: d in skipdirs)
         
         self.assertTrue('openmdao.main.component.Component' in 
                         psta.graph['openmdao.main.container.Container'])
@@ -41,8 +46,8 @@ class DepTestCase(unittest.TestCase):
         self.assertTrue('openmdao.main.assembly.Assembly' in icomps)
         
         comps.extend(psta.find_inheritors('openmdao.main.variable.Variable'))
-        comps.extend(psta.find_inheritors('enthought.traits.api.Array'))
-        comps = [x.rsplit('.',1)[1] for x in comps if '.examples.' not in x and '.optproblems.' not in x]
+        comps.extend(psta.find_inheritors('traits.api.Array'))
+        comps = [x.rsplit('.',1)[1] for x in comps] 
         cset = set(comps)
         excludes = set([
             'Driver',
@@ -53,6 +58,9 @@ class DepTestCase(unittest.TestCase):
             'PassthroughProperty',
             'OptProblem',
             'TraitArray',
+            'Broadcast', # utility class for bliss2000
+            'SubSystemOpt', # utility class for bliss2000
+            'SubSystemObj' # utility class for bliss2000
             ])
         cset = cset - excludes
         

@@ -1,15 +1,10 @@
 import copy
 from math import atan2, cos, hypot, sin
-import logging
-try:
-    import numpy
-except ImportError as err:
-    logging.warn("In %s: %r" % (__file__, err))
+
+import numpy
 
 from openmdao.lib.datatypes.domain.vector import Vector
-from openmdao.util.decorators import stub_if_missing_deps
 
-@stub_if_missing_deps('numpy')
 class GridCoordinates(Vector):
     """
     Coordinate data for a :class:`Zone`.
@@ -18,7 +13,7 @@ class GridCoordinates(Vector):
     2D spatial data must set 'x', and 'y' or 'r' and 't'.
     3D spatial data must set 'x', 'y', and 'z' or 'r', 't', and 'z'.
     Note that index dimension is not the same as spatial dimension.
-    I.e. a curve in 3D space is represented by 1D 'x', 'y', and 'z' arrays.
+    For example, a curve in 3D space is represented by 1D 'x', 'y', and 'z' arrays.
     It can also be represented by 2D or 3D arrays where only one index
     dimension varies.
     """
@@ -137,7 +132,7 @@ class GridCoordinates(Vector):
             The grid to check against.
 
         logger: :class:`Logger` or None
-            Used to log debug messages that will indicate what if anything is
+            Used to log debug messages that will indicate what, if anything, is
             not equivalent.
 
         tolerance: float
@@ -165,7 +160,7 @@ class GridCoordinates(Vector):
 
         ghosts: int[]
             Number of ghost/rind planes for the new zone.
-            If ``None`` the existing specification is used.
+            If ``None``, the existing specification is used.
         """
         vec = super(GridCoordinates, self).extract(imin, imax, jmin, jmax,
                                                    kmin, kmax, ghosts)

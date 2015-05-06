@@ -9,9 +9,11 @@ import time
 
 from openmdao.main.mp_util import read_server_config
 from openmdao.main.objserverfactory import connect, start_server
+from openmdao.util.fileutil import onerror
 
 
 MESSAGE_DATA = []
+
 
 def init_messages():
     """ Initialize message data for various sizes. """
@@ -25,12 +27,12 @@ def run_test(name, server):
         server.echo(MESSAGE_DATA[0])  # 'prime' the connection.
 
     results = []
-    reps = 10000
+    reps = 1000
     for msg in MESSAGE_DATA:
-        start = time.clock()
+        start = time.time()
         for i in range(reps):
             server.echo(msg)
-        et = time.clock() - start
+        et = time.time() - start
 
         size = len(msg)
         latency = et / reps
@@ -54,13 +56,13 @@ def main():
     # For each configuration...
     count = 0
     for authkey in ('PublicKey', 'UnEncrypted'):
-        for ip_port in (0, -1):
+        for ip_port in (-1, 0):
             for hops in (1, 2):
                 # Start factory in unique directory.
                 count += 1
                 name = 'Echo_%d' % count
                 if os.path.exists(name):
-                    shutil.rmtree(name)
+                    shutil.rmtree(name, onerror=onerror)
                 os.mkdir(name)
                 os.chdir(name)
                 try:
@@ -123,9 +125,8 @@ def main():
             out.write('\n')
 
     for path in glob.glob('Echo_*'):
-        shutil.rmtree(path)
+        shutil.rmtree(path, onerror=onerror)
 
 
 if __name__ == '__main__':
     main()
-

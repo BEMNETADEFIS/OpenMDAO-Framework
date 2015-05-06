@@ -26,8 +26,8 @@ from numpy import float32, zeros
 import axod as axod
 #from  readclas  import readfile
 
-from openmdao.main.api import Component, set_as_top, Container
-from openmdao.lib.datatypes.api import Float, Array, Str, Int
+from openmdao.main.api import Component, Container
+from openmdao.main.datatypes.api import Float, Array, Str
 from datain import Datain
 
 __all__ = ('AxodCompn',)
@@ -119,8 +119,8 @@ class AxodCompn(Component):
     effs  = Array(_ZEROS48, dtype=float32, shape=(48,), iotype='out')
     effr  = Array(_ZEROS48, dtype=float32, shape=(48,), iotype='out')
 
-    def __init__(self, doc=None, directory='', input_filename=''):
-        super(AxodCompn, self).__init__(doc, directory)
+    def __init__(self, input_filename=''):
+        super(AxodCompn, self).__init__()
         self.input_filename = input_filename
         self.out_filename=self.input_filename+'O'
         self.ncases = _ncases
@@ -152,8 +152,7 @@ class AxodCompn(Component):
         outp.close()
                                                
                 
-    def tree_rooted(self):
-        super(AxodCompn, self).tree_rooted()
+    def configure(self):
         with self.dir_context:
             self.read_input(self.input_filename)
 
@@ -182,8 +181,8 @@ class AxodCompn(Component):
             inp.close()
 
 #if  __name__ == '__main__':
-    #one = set_as_top(AxodCompn(input_filename='one_stage.inp'))
-    #one = set_as_top(AxodCompn(input_filename='eee_hpt.inp'))
+    #one = AxodCompn(input_filename='one_stage.inp')
+    #one = AxodCompn(input_filename='eee_hpt.inp')
     #one.Case1.Stage1.ptin = 51.00
     #one.Case1.Stage1.ttin = 1284.0
     #one.Case1.Stage1.vctd = 1.0

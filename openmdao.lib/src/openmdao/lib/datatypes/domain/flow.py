@@ -27,7 +27,7 @@ class FlowSolution(object):
         self._grid_location = loc
 
     grid_location = property(_get_grid_location, _set_grid_location,
-                             doc='Position at which data is located,'
+                             doc='Position at which data is located;'
                                  ' must be one of %s' % (_GRID_LOCATIONS,))
     def _get_ghosts(self):
         return self._ghosts
@@ -147,7 +147,7 @@ class FlowSolution(object):
             The flowfield to check against.
 
         logger: :class:`Logger` or None
-            Used to log debug messages that will indicate what if anything is
+            Used to log debug messages that will indicate what, if anything, is
             not equivalent.
 
         tolerance: float

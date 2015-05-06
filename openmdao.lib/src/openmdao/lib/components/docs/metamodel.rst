@@ -5,39 +5,16 @@
 *MetaModel*
 ~~~~~~~~~~~
 
-MetaModel is a class which supports generalized meta modeling capabilities. It has two  slots, one
-for surrogate model generators and a second for the  model that is being approximated. The first
-slot, named `surrogate`, must  always be filled before anything else is done. This slot gets
-filled with  a dictionary that specifies which surrogate model generator should be used for  which
-outputs. The keys of the dictionary are the variable names, and the values are the particular
-surrogate model generators which adhere to the ISurrogate interface. A special key, ``'default'``,
-can be used to indicate a surrogate model generator to be used if no specific one is given for a
-particular variable.  Any specified variables will override the default. OpenMDAO provides some
-surrogate modelers in ``openmdao.lib.surrogatemodels``. 
+MetaModel is a class which supports generalized meta modeling
+(a.k.a. surrogate modeling) capabilities. The Metamodel can
+be used to create a reduced order (and faster) respresentation
+of any input-output relationship in your model. The inputs to
+a metamodel are called params, and the outputs are called responses. When
+you instantiate a metamodel, you give it a tuple of params and a tuple of
+responses that you want it to model.
 
-.. testcode:: MetaModel_slots
-        
-   from openmdao.main.api import Assembly
-   from openmdao.lib.components.api import MetaModel
-   from openmdao.lib.surrogatemodels.api import KrigingSurrogate,LogisticRegression
-
-   class Simulation(Assembly):
-       def __init__(self): 
-           super(Simulation,self).__init__(self)
-
-           self.add('meta_model',MetaModel())
-           #using KriginSurrogate for all outputs                
-           self.meta_model.surrogate = {'default':KrigingSurrogate()}
-
-           #alternately, overiding the default for a specific variable
-           self.meta_model.surrogate = {'default':LogisticRegression(),
-                                        'f_xy':KrigingSurrogate()}
-
-Once the surrogate dictionary has been specified, the model slot, called 
-`model`, can be filled with a component. As soon as a component is put in the
-slot, MetaModel will automatically mirror the inputs and outputs of that 
-component. In other words, MetaModel will have the same inputs and 
-outputs as whatever component is put into the model slot. 
+Let's start by creating an assembly with a component (the `BraninComponent`)
+and a metamodel of its response with respect to its two inputs.
 
 .. testcode:: MetaModel_model
 
@@ -47,33 +24,29 @@ outputs as whatever component is put into the model slot.
     from openmdao.lib.optproblems.branin import BraninComponent
 
     class Simulation(Assembly):
-        def __init__(self): 
-            super(Simulation,self).__init__(self)
+        def configure(self):
 
-            self.add('meta_model',MetaModel())
-            self.meta_model.surrogate = {'default':KrigingSurrogate()}
+            #component has two inputs (x, y) and one output (f_xy)
+            self.add('model', BraninComponent())
+            self.model.x = 9.
+            self.model.y = 9.
 
-            #component has two inputs: x,y
-            self.meta_model.model = BraninComponent()
+            #create meta_model for f_xy as the response
+            self.add('meta_model', MetaModel(params=('x', 'y'),
+                                             responses=('f_xy')))
 
-            #meta_model now has two inputs: x,y
-            self.meta_model.x = 9
-            self.meta_model.y = 9
+Metamodel contains a ``slot``, called ``default_surrogate``, which can be
+filled with a surrogate model generator instance. Copies of this default
+surrogate model generator will be used for any outputs that don't have a
+specific surrogate model generator associated with them.
 
+You can also associate a surrogate model generator with a specific output by
+finding that output's key in the dictionary named `surrogates` and assigning
+the specific surrogate model there. All surrogate model generators must
+implement the ISurrogate interface. OpenMDAO provides some surrogate model
+generators in the ``openmdao.lib.surrogatemodels`` directory.
 
-Depending on the component being approximated, you may not want to generate 
-approximations for all the outputs. Alternatively, you may want to exclude some 
-of the inputs from consideration when the surrogate models are generated
-if the inputs are going to be held constant for a given study. MetaModel
-provides two I/O-Traits to handle this situation: `includes` and `excludes`.
-Only one of these traits can be used at a time, and both inputs and outputs
-are specified at the same time. 
-
-If you are specifying the includes, then only the I/O-Traits in that list will
-be used. If you are specifying the excludes, then everything *but* the I/O-Traits
-in the list will be mirrored by MetaModel.
-
-.. testcode:: MetaModel_excludes
+.. testcode:: MetaModel_slots
 
     from openmdao.main.api import Assembly
     from openmdao.lib.components.api import MetaModel
@@ -81,133 +54,98 @@ in the list will be mirrored by MetaModel.
     from openmdao.lib.optproblems.branin import BraninComponent
 
     class Simulation(Assembly):
-        def __init__(self):
-            super(Simulation,self).__init__(self)
+        def configure(self):
 
-            self.add('meta_model',MetaModel())
-            self.meta_model.surrogate = {'default':KrigingSurrogate()}
+            #component has two inputs (x, y) and one output (f_xy)
+            self.add('model', BraninComponent())
+            self.model.x = 9
+            self.model.y = 9
 
-            #component has two inputs: x,y
-            self.meta_model.model = BraninComponent()
+            #create meta_model for f_xy as the response
+            self.add('meta_model', MetaModel(params=('x', 'y'),
+                                             responses=('f_xy')))
 
-            #exclude the x input 
-            self.meta_model.excludes=['x']
+            #The meta_model contains a dictionary named 'surrogates' whose keys are
+            #the variable names, and whose values are slots where a surrogate
+            #model instance can be filled. In this case we'll just put
+            #another KrigingSurrogate in there, just to show how it's done.
+            #Since the default_surrogate is also a KrigingSurrogate, this
+            #will give us the same results we would have had if we'd only
+            #used the default_surrogate.
 
+            # use Kriging for the f_xy output
+            self.meta_model.surrogates['f_xy'] = KrigingSurrogate()
 
-or 
+Now you have set up your MetaModel with a specific surrogate model, and you have
+put a model into the `model` slot. The next step is to actually start
+training and executing the MetaModel in simulations.
 
-.. testcode:: MetaModel_includes
+When you create a MetaModel instance, a selection of input and output variables are
+created based on the names you give it in the params and responses tuples. These variables
+allow you to operate the metamodel in *training* and *prediction*.
 
-    from openmdao.main.api import Assembly
-    from openmdao.lib.components.api import MetaModel
-    from openmdao.lib.surrogatemodels.api import KrigingSurrogate
-    from openmdao.lib.optproblems.branin import BraninComponent
+For training, a Metamodel is created with two variables trees ``params`` and ``responses``,
+which contain inputs for all of the params and responses that were specified
+when instantiated. You can connect these variables to some other component
+(like a ``DOEDriver``) that provides a list of training points. Each training point in the list
+is a list of the values of all the params or responses.
 
-    class Simulation(Assembly):
-
-        def __init__(self): 
-            super(Simulation,self).__init__(self)
-
-            self.add('meta_model',MetaModel())
-            self.meta_model.surrogate = {'default': KrigingSurrogate()}
-
-            #component has two inputs: x,y
-            self.meta_model.model = BraninComponent()
-
-            #include only the y input
-            self.meta_model.includes=['y']
-
-MetaModel treats inputs and outputs a little differently. All the inputs, regardless of which ones
-are being included/excluded, will be mirrored by a MetaModel. But if inputs are excluded, then
-MetaModel won't pass down their values to the surrogate models as inputs to training cases. 
-
-When outputs are excluded, they no longer get mirrored by MetaModel. They won't get
-surrogate models fit to them, and consequently, they won't be available to the simulation from
-MetaModel. 
-
-Now you have set up your MetaModel with a specific surrogate model, and you have 
-put a model into the `model` slot. The input and output 
-inclusions/exclusions have been specified. The next step is to actually start
-training and executing the MetaModel in simulations. 
-
-MetaModel has two operating modes: *training* and *prediction.* When run in *training* mode, 
-MetaModel passes its given inputs down to the model in the model slot and runs 
-it. Then it stores the outputs from the model to use for generating a
-surrogate model later. When run in *predict* mode, MetaModel will check for 
-any new training data and, if present, will generate a surrogate model for 
-each model output with the data. Then it will make a prediction of the model 
-outputs for the given inputs. A MetaModel instance must always be run in training mode 
-before executing it in predict mode.
-
-To put an instance of MetaModel into the training mode, you must set the ``train_next`` event trait
-before executing the component. This event trait automatically resets itself after the execution, 
-so it must be set again before each training case. An event trait is just a trigger mechanism, and
-it will trigger its behavior regardless of the value you set it to. 
-
-.. testcode:: MetaModel
-
-    from openmdao.main.api import Assembly
-    from openmdao.lib.components.api import MetaModel
-    from openmdao.lib.surrogatemodels.api import KrigingSurrogate
-    from openmdao.lib.optproblems.branin import BraninComponent
-
-    class Simulation(Assembly):
-        def __init__(self): 
-            super(Simulation,self).__init__()
-
-            self.add('meta_model',MetaModel())
-            self.meta_model.surrogate = {'default':KrigingSurrogate()}
-
-            #component has two inputs: x,y
-            self.meta_model.model = BraninComponent()
-
-            self.meta_model.train_next = True
-            self.meta_model.x = 2
-            self.meta_model.y = 3
-
-            self.meta_model.execute()
-
-
-In a typical iteration hierarchy, a Driver is responsible for setting the
-``train_next`` event when appropriate. This is accomplished via the
-IHasEvents Driver sub-interface. The ``train_next`` event is added to a
-Driver, which will then automatically set ``train_next`` prior to each
-iteration of the model. A simple code snippet is presented below, while a
-more detailed example can be found in the ``single_objective_ei`` example under the
-``openmdao.examples.expected_improvement`` package.
+For prediction, a Metamodel is also created with input and output variables
+that match the params and responses that were specified. Once a MetaModel has
+been trained, it will run in *predict* mode, and predict its outputs based on
+what is passed into the input variables.
 
 .. testcode:: MetaModel_Assembly
 
     from openmdao.main.api import Assembly
-    from openmdao.lib.drivers.api import DOEdriver
     from openmdao.lib.components.api import MetaModel
-    from openmdao.lib.surrogatemodels.api import KrigingSurrogate
+    from openmdao.lib.doegenerators.api import FullFactorial
+    from openmdao.lib.drivers.api import DOEdriver
     from openmdao.lib.optproblems.branin import BraninComponent
+    from openmdao.lib.surrogatemodels.api import KrigingSurrogate
 
-    class Simulation(Assembly): 
-        def __init__(self,doc=None): 
-            super(Simulation,self).__init__()
+    class Simulation(Assembly):
+        def configure(self):
 
-            self.add('meta_model',MetaModel())
-            self.meta_model.surrogate = {'default':KrigingSurrogate()}
+            #component has two inputs (x, y) and one output (f_xy)
+            self.add('model', BraninComponent())
+            self.model.x = 9
+            self.model.y = 9
 
-            #component has two inputs: x,y
-            self.meta_model.model = BraninComponent()
+            #create meta_model for f_xy as the response
+            self.add('meta_model', MetaModel(params=('x', 'y'),
+                                             responses=('f_xy')))
 
-            self.add('driver',DOEdriver())
-            self.driver.workflow.add('meta_model')
-            self.driver.add_event('meta_model.train_next')
+            # use Kriging for the f_xy output
+            self.meta_model.surrogates['f_xy'] = KrigingSurrogate()
 
-When the ``train_next`` event is not set, MetaModel automatically runs in predict mode. 
-When in predict mode, the outputs provided are the result of predicted outputs from the 
-surrogate model inside of MetaModel. 
+            # Generate training data for the meta_model
+            self.add("DOE_Trainer", DOEdriver())
+            self.DOE_Trainer.DOEgenerator = FullFactorial()
+            self.DOE_Trainer.DOEgenerator.num_levels = 25
+            self.DOE_Trainer.add_parameter("model.x", low=0, high=20)
+            self.DOE_Trainer.add_parameter("model.y", low=0, high=20)
+            self.DOE_Trainer.add_response('model.f_x')
 
-Before being able to predict the surrogate model response
-for any of the outputs of MetaModel, the surrogate model must be trained with the 
-recorded training data. This will happen automatically whenever MetaModel is run in predict mode and 
-new training data is available. This makes MetaModel more efficient, because it is not trying
-to retrain the model constantly when running large sets of training cases. Instead, the actual
-surrogate model training is only done when a prediction is needed and new training data is available. 
+            # Pass training data to the meta model.
+            self.connect('DOE_Trainer.case_inputs.model.x', 'meta_model.params.x')
+            self.connect('DOE_Trainer.case_inputs.model.y', 'meta_model.params.y')
+            self.connect('DOE_Trainer.case_outputs.model.f_x', 'meta_model.responses.f_x')
+
+            # Iteration Hierarchy
+            self.driver.workflow.add(['DOE_Trainer','model'])
+            self.DOE_Trainer.workflow.add('model')
+
+
+The first time a MetaModel runs, it trains using the data in the params and
+responses variable trees, and then predicts a new response. Thereafter, it
+always predicts. However, if new training data is passed in, then it will
+train on the new data, and predict. This makes MetaModel more efficient,
+because it is not trying to retrain the model constantly when running large
+sets of training cases. Instead, the actual surrogate model training is only
+done when a prediction is needed and new training data is available.
+
+
 
 *Source Documentation for metamodel.py*
 ~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~

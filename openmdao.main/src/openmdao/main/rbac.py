@@ -10,8 +10,8 @@ assigning this access control attribute to methods.
 Remote access to attributes is checked based on role, accessing method, object,
 and attribute.
 
-These access checks are mediated by an :class:`AccessController`. There is a
-default controller assigned to each :class:`OpenMDAO_Server`. The server will
+These access checks are mediated by an :class:`AccessController`. A
+default controller is assigned to each :class:`OpenMDAO_Server`. The server will
 check for an object-specific controller by trying to invoke
 :meth:`get_access_controller` on the object before using the default.
 
@@ -41,7 +41,6 @@ import sys
 import threading
 
 from Crypto.PublicKey import RSA
-from Crypto.Random import get_random_bytes
 
 from openmdao.util.publickey import get_key_pair, HAVE_PYWIN32, \
                                     pk_sign, pk_verify
@@ -88,11 +87,17 @@ class Credentials(object):
         object.
     """
 
-    user_host = '%s@%s' % (getpass.getuser(), socket.gethostname())
+    try:  # Ensure we can at least connect to ourselves.
+        socket.gethostbyaddr(socket.getfqdn())
+    except (socket.gaierror, socket.herror) as err:
+        user_host = '%s@%s' % (getpass.getuser(), socket.gethostname())
+    else:
+        user_host = '%s@%s' % (getpass.getuser(), socket.getfqdn())
 
     def __init__(self, encoded=None):
         # We don't use cPickle to create or parse .data because we'd rather not
         # have to trust a source until after we've checked their credentials.
+        self.remote = False
         if encoded is None:
             # Create our credentials.
             self.user = Credentials.user_host
@@ -192,6 +197,7 @@ class Credentials(object):
                                            % credentials.user)
 
         credentials.client_creds = client_creds
+        credentials.remote = True
         return credentials
 
 
@@ -215,9 +221,7 @@ def remote_access():
     except AttributeError:
         return False
     else:
-        # Not remote if acting on the local user's behalf.
-        return creds.user != Credentials.user_host or \
-               creds.client_creds is not None
+        return creds.remote
 
 
 # For some reason use of a class as a decorator doesn't count as coverage.
@@ -249,7 +253,7 @@ class rbac(object):  #pragma no cover
 def rbac_decorate(method, roles, proxy_role='', proxy_types=None):
     """
     Post-definition decorator for specifying RBAC roles for a method.
-    Not typically used, but needed if `proxy_types` must include the
+    Not typically used but needed if `proxy_types` must include the
     class currently being defined, since the normal decorator won't see
     the class yet.
 
@@ -291,7 +295,7 @@ def rbac_methods(obj):
 def need_proxy(meth, result, access_controller):
     """
     Returns True if `result` from `meth` requires a proxy.
-    If no proxy types have been explicitly defined for `meth` then
+    If no proxy types have been explicitly defined for `meth`, then
     `access_controller` provides a default set.
 
     meth: method.
@@ -327,7 +331,7 @@ class AccessController(object):
     Responsible for mapping :class:`Credentials` to roles and optionally
     getting different credentials for executing a method.
 
-    Also reponsible for determining which attributes and classes require
+    Also responsible for determining which attributes and classes require
     a proxy to be returned rather than the value.
     """
 

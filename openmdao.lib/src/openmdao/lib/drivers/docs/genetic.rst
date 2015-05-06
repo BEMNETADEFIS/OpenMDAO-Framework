@@ -31,9 +31,9 @@ You add design variables to Genetic using the ``add_parameter`` method.
 
 .. testcode:: Genetic
 
-    from openmdao.main.api import Assembly,Component, set_as_top
+    from openmdao.main.api import Assembly, Component, set_as_top
     from openmdao.lib.drivers.api import Genetic
-    from openmdao.lib.datatypes.api import Float,Int,Enum
+    from openmdao.lib.datatypes.api import Float, Int, Enum
     
     
     class SomeComp(Component):
@@ -50,10 +50,7 @@ You add design variables to Genetic using the ``add_parameter`` method.
     class Simulation(Assembly):
         """Top Level Assembly used for simulation"""
     
-        def __init__(self):
-            """Adds the Genetic driver to the assembly"""
-        
-            super(Simulation,self).__init__()
+        def configure(self):
         
             self.add('driver', Genetic())
             self.add('comp', SomeComp())
@@ -65,8 +62,7 @@ You add design variables to Genetic using the ``add_parameter`` method.
             self.driver.add_parameter('comp.y')
             self.driver.add_parameter('comp.z')
     
-    top = Simulation()
-    set_as_top(top)
+    top = set_as_top(Simulation())
         
 In the above example, three parameters were added to the optimizer. The optimizer 
 figures out for itself what type of variable it is and behaves appropriately. In all three
@@ -109,7 +105,7 @@ In the second example above, a more complex objective function was created where
 a weighted combination of ``comp.x, comp.y,`` and ``comp.z``. 
 
 To set the optimizer to either minimize or maximize your objective, you set the
-``opt_type`` variable of Genetic to ``"minimize"`` or ``"maximize``.
+``opt_type`` variable of Genetic to ``"minimize"`` or ``"maximize"``.
 
 .. testcode:: Genetic
 
@@ -169,7 +165,7 @@ what.
     top.driver.elitism = True
 
 A number of different commonly used selection algorithms are available. The default algorithm is the Roulette
-Wheel Algorithm, but Rank Selection, and Uniform Selection are also available. The
+Wheel Algorithm, but Rank Selection and Uniform Selection are also available. The
 ``selection_method`` variable allows you to select the algorithm; allowed values are: ``"roulette_wheel," 
 "rank,"`` and ``"uniform"``.
 

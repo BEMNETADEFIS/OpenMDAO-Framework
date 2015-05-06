@@ -3,7 +3,7 @@ from math import cos, pi
 from openmdao.main.api import Component
 from openmdao.main.problem_formulation import OptProblem
 
-from openmdao.lib.datatypes.api import Float
+from openmdao.main.datatypes.api import Float
 
 class BraninComponent(Component): 
     x = Float(0.,iotype="in")
@@ -17,9 +17,7 @@ class BraninComponent(Component):
 class BraninProblem(OptProblem): 
     """Branin Test Problem Definition""" 
     
-    def __init__(self): 
-        super(OptProblem,self).__init__()
-        
+    def configure(self): 
         self.add("branin",BraninComponent())
         
         #Problem Formulation 

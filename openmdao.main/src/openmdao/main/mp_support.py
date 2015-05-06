@@ -23,7 +23,7 @@ role is allowed access. The current role is determined by an
 :class:`AccessController` based on a :class:`Credentials` object received from
 the proxy.
 
-Assuming the credentials check passes, the server will set it's credentials
+Assuming the credentials check passes, the server will set its credentials
 to those specified by the :class:`AccessController` during the execution of the
 method.
 """
@@ -36,6 +36,7 @@ method.
 # No obvious 'best' alternative.
 
 import errno
+import glob
 import hashlib
 import inspect
 import logging
@@ -46,24 +47,29 @@ import threading
 import time
 import traceback
 
+from Crypto import Random
+
 from multiprocessing import Process, current_process, connection, util
 from multiprocessing.forking import Popen
 from multiprocessing.managers import BaseManager, BaseProxy, RebuildProxy, \
                                      Server, State, Token, convert_to_error, \
-                                     dispatch
+                                     dispatch, RemoteError
 
 if sys.platform == 'win32':  #pragma no cover
     from _multiprocessing import win32
 
-from enthought.traits.trait_handlers import TraitDictObject
+from traits.trait_handlers import TraitDictObject
 
-from openmdao.main.interfaces import obj_has_interface
+from openmdao.main.interfaces import implements, obj_has_interface, IContainerProxy
 from openmdao.main.mp_util import decrypt, encrypt, is_legal_connection, \
                                   keytype, make_typeid, public_methods, \
-                                  SPECIALS
+                                  tunnel_address, SPECIALS
 from openmdao.main.rbac import AccessController, RoleError, check_role, \
                                need_proxy, Credentials, \
                                get_credentials, set_credentials
+
+from openmdao.util.log import install_remote_handler, remove_remote_handlers, \
+                              logging_port, LOG_DEBUG2, LOG_DEBUG3
 
 from openmdao.util.publickey import decode_public_key, encode_public_key, \
                                     get_key_pair, HAVE_PYWIN32, \
@@ -77,24 +83,31 @@ CLASSES_TO_PROXY = []
 _PROXY_CACHE = {}
 
 
-def is_instance(obj, typ):
+def is_instance(obj, type_info):
     """
     :func:`isinstance` replacement for when `obj` might be a proxy.
 
     obj: object
         Object to be tested.
 
-    typ: class
-        Class to be tested against.
+    type_info: class or tuple of classes
+        Class(es) to be tested against.
 
-    Returns True if `obj` is an instance of `typ`, or the object `obj` refers
-    to is an instance of `typ`.
+    Returns True if `obj` is an instance of `type_info` or the object `obj`
+    refers to is an instance of `type_info`.
     """
     if isinstance(obj, OpenMDAO_Proxy):
-        typename = '%s.%s' % (typ.__module__, typ.__name__)
-        return obj.__is_instance__(typename)
+        try:
+            type_info[0]
+        except TypeError:
+            type_info = (type_info,)
+        for typ in type_info:
+            typename = '%s.%s' % (typ.__module__, typ.__name__)
+            if obj.__is_instance__(typename):
+                return True
+        return False
     else:
-        return isinstance(obj, typ)
+        return isinstance(obj, type_info)
 
 
 def has_interface(obj, *ifaces):
@@ -113,8 +126,11 @@ def has_interface(obj, *ifaces):
     if isinstance(obj, OpenMDAO_Proxy):
         for typ in ifaces:
             typename = '%s.%s' % (typ.__module__, typ.__name__)
-            if obj.__has_interface__(typename):
-                return True
+            try:
+                if obj.__has_interface__(typename):
+                    return True
+            except RemoteError:
+                return False
         return False
     else:
         return obj_has_interface(obj, *ifaces)
@@ -144,7 +160,7 @@ class OpenMDAO_Server(Server):
 
     allowed_hosts: list(string)
         Host address patterns to check against.
-        Ignored if `allowed_users` is specified.
+        Optional if `allowed_users` is specified.
 
     allowed_users: dict
         Dictionary of users and corresponding public keys allowed access.
@@ -152,34 +168,46 @@ class OpenMDAO_Server(Server):
         The host portions of user strings are used for address patterns.
 
     allow_tunneling: bool
-        If True, allow connections from 127.0.0.1 (localhost), even if not
-        listed otherwise.
+        If True, allow connections from the local host, even if not listed
+        otherwise.
     """
 
     def __init__(self, registry, address, authkey, serializer, name=None,
                  allowed_hosts=None, allowed_users=None, allow_tunneling=False):
         super(OpenMDAO_Server, self).__init__(registry, address, authkey,
                                               serializer)
-        self.name = name or 'OMS_%d' % os.getpid()
+        self.name = name or ('OMS_%d' % os.getpid())
+        self._logger = logging.getLogger(self.name)
+        self._logger.info('OpenMDAO_Server process %d started, %r',
+                          os.getpid(), keytype(authkey))
+
+        Random.atfork()  # Get our own PRNG.
+
         self.host = socket.gethostname()
         self._allowed_users = allowed_users
         if self._allowed_users is not None:
             hosts = set()
             for user_host in self._allowed_users.keys():
                 user, host = user_host.split('@')
-                hosts.add(socket.gethostbyname(host))
-                if host == socket.gethostname():
-                    hosts.add('127.0.0.1')
+                try:
+                    ip_addr = socket.gethostbyname(host)
+                except socket.gaierror:
+                    self._logger.warning('No address for %r', host)
+                else:
+                    hosts.add(ip_addr)
+                if host == socket.getfqdn() or host == socket.gethostname():
+                    hosts.add('127.0.0.1')  # localhost
+            if allowed_hosts:
+                hosts |= set(allowed_hosts)
             self._allowed_hosts = list(hosts)
         else:
             self._allowed_hosts = allowed_hosts or []
 
-        if allow_tunneling and '127.0.0.1' not in self._allowed_hosts:
-            self._allowed_hosts.append('127.0.0.1')
+        self._allow_tunneling = allow_tunneling
+        if allow_tunneling:
+            self._allowed_hosts.append('127.0.0.1')  # localhost
+            self._allowed_hosts.append(socket.gethostbyname(address[0]))
 
-        self._logger = logging.getLogger(name)
-        self._logger.info('OpenMDAO_Server process %d started, %r',
-                          os.getpid(), keytype(authkey))
         if self._allowed_users is None:
             self._logger.warning('    allowed_users: ANY')
         else:
@@ -234,12 +262,24 @@ class OpenMDAO_Server(Server):
         current_process()._manager_server = self
         try:
             try:
-                while 1:
+                while not self.stop:
                     try:
                         conn = self.listener.accept()
+                        # Comment-out the line above and use this equivalent
+                        # to debug connectivity issues.
+                        #conn = self.listener._listener.accept()
+                        #self._logger.critical('connection attempt from %r',
+                        #                      self.listener.last_accepted)
+                        #if self.listener._authkey:
+                        #    connection.deliver_challenge(conn, self.listener._authkey)
+                        #    connection.answer_challenge(conn, self.listener._authkey)
+
                     # Hard to cause this to happen.
                     except (OSError, IOError):  #pragma no cover
-                        continue
+                        if self.stop:
+                            break
+                        else:
+                            continue
 
                     address = self.listener.last_accepted
                     if address:
@@ -345,9 +385,8 @@ class OpenMDAO_Server(Server):
 
         This version supports dynamic proxy generation and credential checking.
         """
-        self._logger.debug('starting server thread to service %r, %s',
-                           threading.current_thread().name,
-                           keytype(self._authkey))
+        self._logger.log(LOG_DEBUG2, 'starting server thread to service %r, %s',
+                         threading.current_thread().name, keytype(self._authkey))
         recv = conn.recv
         send = conn.send
         id_to_obj = self.id_to_obj
@@ -376,9 +415,10 @@ class OpenMDAO_Server(Server):
                     raise RuntimeError(msg)
 
                 ident, methodname, args, kwds, credentials = request
-#                self._logger.debug('request %s %s %s',
-#                                   ident, methodname, credentials)
-#                self._logger.debug('id_to_obj:\n%s', self.debug_info(conn))
+                self._logger.log(LOG_DEBUG3, 'request %s %s', ident, methodname)
+#                self._logger.log(LOG_DEBUG3, 'credentials %s', credentials)
+#                self._logger.log(LOG_DEBUG3, 'id_to_obj:\n%s',
+#                                 self.debug_info(conn))
 
                 # Decode and verify valid credentials.
                 try:
@@ -430,15 +470,15 @@ class OpenMDAO_Server(Server):
                                            credentials)
                 if methodname != 'echo':
                     # 'echo' is used for performance tests, keepalives, etc.
-                    self._logger.debug('Invoke %s %s %s',
+                    self._logger.log(LOG_DEBUG2, "Invoke %s %s '%s'",
                                        methodname, role, credentials)
-#                    self._logger.debug('       %s %s', args, kwds)
+                    self._logger.log(LOG_DEBUG3, '       %s %s', args, kwds)
 
                 # Invoke function.
                 try:
                     try:
                         res = function(*args, **kwds)
-#                        self._logger.debug('       res %r', res)
+                        self._logger.log(LOG_DEBUG3, '       res %r', res)
                     except AttributeError as exc:
                         if isinstance(obj, BaseProxy) and \
                            methodname == '__getattribute__':
@@ -447,9 +487,9 @@ class OpenMDAO_Server(Server):
                         else:
                             raise
                 except Exception as exc:
-                    self._logger.error('%s %s %s: %r',
-                                       methodname, role, credentials, exc)
-                    msg = ('#ERROR', exc)
+                    self._logger.exception('%s %s %s failed:',
+                                           methodname, role, credentials)
+                    msg = ('#TRACEBACK', traceback.format_exc())
                 else:
                     msg = self._form_reply(res, ident, methodname, function,
                                            args, access_controller, conn)
@@ -462,7 +502,7 @@ class OpenMDAO_Server(Server):
                     orig_traceback = traceback.format_exc()
                     try:
                         fallback_func = self.fallback_mapping[methodname]
-                        self._logger.debug('Fallback %s', methodname)
+                        self._logger.log(LOG_DEBUG2, 'Fallback %s', methodname)
                         result = fallback_func(self, conn, ident, obj,
                                                *args, **kwds)
                         msg = ('#RETURN', result)
@@ -606,7 +646,8 @@ class OpenMDAO_Server(Server):
                 # Create proxy for proxy.
                 typeid = res._token.typeid
                 proxyid = make_typeid(res)
-                self._logger.debug('Creating proxy for proxy %s', proxyid)
+                self._logger.log(LOG_DEBUG2, 'Creating proxy for proxy %s',
+                                 proxyid)
                 if proxyid not in self.registry:
                     self.registry[proxyid] = (None, None, None, _auto_proxy)
             else:
@@ -615,6 +656,7 @@ class OpenMDAO_Server(Server):
                 msg = ('#PROXY', (res._exposed_, res._token, res._pubkey))
 
         elif access_controller is not None:
+            # Check if the value must be proxied.
             if methodname in SPECIALS:
                 if access_controller.need_proxy(obj, args[0], res):
                     # Create proxy if in declared proxy types.
@@ -629,6 +671,11 @@ class OpenMDAO_Server(Server):
                 if typeid not in self.registry:
                     self.registry[typeid] = (None, None, None, None)
 
+            elif hasattr(res, '_parent') and res._parent is not None:
+                # Check if the value must be copied (VariableTree).
+                # Odd that it isn't being proxied (though we don't want one).
+                res = res.copy()
+
         # Proxy pass-through only happens remotely.
         else:  #pragma no cover
             # Create proxy if registered.
@@ -639,8 +686,8 @@ class OpenMDAO_Server(Server):
             if typeid:
                 rident, rexposed = self.create(conn, proxyid, res)
                 token = Token(typeid, self.address, rident)
-                self._logger.debug('Returning proxy for %s at %s',
-                                   typeid, self.address)
+                self._logger.log(LOG_DEBUG2, 'Returning proxy for %s at %s',
+                                 typeid, self.address)
                 if self._key_pair is None:
                     pubkey = None
                 else:
@@ -705,7 +752,7 @@ class OpenMDAO_Server(Server):
             keys = self.id_to_obj.keys()
             keys.sort()
             for ident in keys:
-                if ident != 0:
+                if ident != '0':
                     obj = self.id_to_obj[ident][0]
                     if isinstance(obj, BaseProxy):
                         obj_str = '%s proxy for %s %s' \
@@ -775,10 +822,25 @@ class OpenMDAO_Server(Server):
     # Will only be seen on remote.
     def shutdown(self, conn):  #pragma no cover
         """ Shutdown this process. """
-        self._logger.debug('received shutdown request, running exit functions')
+        self.stop = 888
+        msg = 'received shutdown request, running exit functions'
+        print msg
+        sys.stdout.flush()
+        self._logger.info(msg)
+        remove_remote_handlers()
+
         # Deprecated, but marginally better than atexit._run_exitfuncs()
+        # Don't try to log here, logging shuts-down via atexit.
         if hasattr(sys, 'exitfunc'):
-            sys.exitfunc()
+            try:
+                sys.exitfunc()
+            except Exception as exc:
+                print 'sys.exitfunc(): %s' % exc
+                sys.stdout.flush()
+
+        print '    exit functions complete'
+        sys.stdout.flush()
+
         super(OpenMDAO_Server, self).shutdown(conn)
 
 
@@ -839,12 +901,15 @@ class OpenMDAO_Manager(BaseManager):
                                self._allowed_hosts, self._allowed_users,
                                self._allow_tunneling)
 
-    def start(self, cwd=None):
+    def start(self, cwd=None, log_level=logging.DEBUG):
         """
         Spawn a server process for this manager object.
 
         cwd: string
             Directory to start in.
+
+        log_level: int
+            Initial root logging level for the server process.
 
         This version retrieves the server's public key.
         """
@@ -864,14 +929,24 @@ class OpenMDAO_Manager(BaseManager):
         else:
             registry = self._registry
 
+        # Flush logs before cloning.
+        for handler in logging._handlerList:
+            try:
+                handler.flush()
+            except AttributeError:
+                h = handler()  # WeakRef
+                if h:
+                    h.flush()
+
         # Spawn process which runs a server.
         credentials = get_credentials()
+        log_port = logging_port('localhost', 'localhost')
         self._process = Process(
             target=type(self)._run_server,
             args=(registry, self._address, self._authkey,
                   self._serializer, self._name, self._allowed_hosts,
                   self._allowed_users, self._allow_tunneling,
-                  writer, credentials, cwd),
+                  writer, credentials, cwd, log_port, log_level),
             )
         ident = ':'.join(str(i) for i in self._process._identity)
         self._process.name = type(self).__name__  + '-' + ident
@@ -883,28 +958,48 @@ class OpenMDAO_Manager(BaseManager):
             if sys.platform == 'win32' and not HAVE_PYWIN32:  #pragma no cover
                 timeout = 120
             else:
-                timeout = 5
+                timeout = 10
         else:
-            timeout = 5
+            timeout = 10
 
         writer.close()
         start = time.time()
+        error_msg = None
         for retry in range(timeout):
             if reader.poll(1):
                 break
             if not self._process.is_alive():
-                raise RuntimeError('Server process %d exited: %s'
-                                   % (pid, self._process.exitcode))
+                error_msg = 'Server process %d exited: %s' \
+                            % (pid, self._process.exitcode)
+                break
         # Hard to cause a timeout.
         else:  #pragma no cover
-            et = time.time() - start
-            self._process.terminate()
-            raise RuntimeError('Server process %d startup timed-out in %.2f' \
-                               % (pid, et))
-        reply = reader.recv()
-        if isinstance(reply, Exception):
-            raise RuntimeError('Server process %d startup failed: %s'
-                               % (pid, reply))
+            if error_msg is None:
+                et = time.time() - start
+                self._process.terminate()
+                error_msg = 'Server process %d startup timed-out in %.2f' \
+                            % (pid, et)
+        if error_msg is None:
+            try:
+                reply = reader.recv()
+            except Exception as exc:  # str(Exception()) is null, repr() isn't.
+                error_msg = 'Server process %d read failed: %s' \
+                            % (pid, str(exc) or repr(exc))
+            else:
+                if isinstance(reply, Exception):
+                    error_msg = 'Server process %d startup failed: %s' \
+                                 % (pid, str(reply) or repr(reply))
+        if error_msg:
+            logging.error(error_msg)
+            if cwd:
+                logging.error('    in dir %r', cwd)
+                for name in ('stdout', 'stderr', 'openmdao_log*.txt'):
+                    for path in glob.glob(os.path.join(cwd, name)):
+                        name = os.path.basename(path)
+                        with open(path, 'r') as inp:
+                            logging.error('    %s:\n%s', name, inp.read())
+            raise RuntimeError(error_msg)
+
         self._address = reply
         if self._authkey == 'PublicKey':
             self._pubkey = reader.recv()
@@ -925,7 +1020,7 @@ class OpenMDAO_Manager(BaseManager):
     @classmethod
     def _run_server(cls, registry, address, authkey, serializer, name,
                     allowed_hosts, allowed_users, allow_tunneling,
-                    writer, credentials, cwd=None): #pragma no cover
+                    writer, credentials, cwd, log_port, log_level): #pragma no cover
         """
         Create a server, report its address and public key, and run it.
         """
@@ -943,30 +1038,32 @@ class OpenMDAO_Manager(BaseManager):
             if cwd is not None:
                 os.chdir(cwd)
 
+                # Cleanup cloned logging environment.
+                del logging.root.handlers[:]
+                del logging._handlerList[:]
+                logging._handlers.clear()
+
                 # Reset stdout & stderr.
-                for handler in logging._handlerList:
-                    try:
-                        handler.flush()
-                    except AttributeError:
-                        h = handler()
-                        if h:
-                            h.flush()
                 sys.stdout.flush()
                 sys.stderr.flush()
                 sys.stdout = open('stdout', 'w')
                 sys.stderr = open('stderr', 'w')
 
                 # Reset logging.
-                logging.root.handlers = []
-                logging.basicConfig(level=logging.NOTSET,
+                logging.basicConfig(level=log_level,
                     datefmt='%b %d %H:%M:%S',
                     format='%(asctime)s %(levelname)s %(name)s: %(message)s',
                     filename='openmdao_log.txt', filemode='w')
+
+                # Connect to remote logging server.
+                if log_port:
+                    install_remote_handler('localhost', log_port, name)
 
             # Create server.
             server = cls._Server(registry, address, authkey, serializer, name,
                                  allowed_hosts, allowed_users, allow_tunneling)
         except Exception as exc:
+            traceback.print_exc()
             writer.send(exc)
             return
         else:
@@ -1009,6 +1106,12 @@ class OpenMDAO_Manager(BaseManager):
                     process.join(timeout=1)
                     if process.is_alive():
                         logging.warning('manager still alive after terminate')
+                if process.is_alive():
+                    if sys.platform != 'win32':
+                        os.kill(process.pid. signal.SIGKILL)
+                        process.join(timeout=1)
+                        if process.is_alive():
+                            logging.warning('manager still alive after kill')
 
         state.value = State.SHUTDOWN
         try:
@@ -1109,6 +1212,8 @@ class OpenMDAO_Proxy(BaseProxy):
 
     """
 
+    implements(IContainerProxy)
+
     def __init__(self, *args, **kwds):
         try:
             pubkey = kwds['pubkey']
@@ -1123,6 +1228,17 @@ class OpenMDAO_Proxy(BaseProxy):
             self._pubkey = pubkey
         else:
             self._pubkey = self._manager._pubkey
+
+    def _connect(self):
+        """ This version translates tunneled addresses. """
+        util.debug('making connection to manager')
+        name = current_process().name
+        if threading.current_thread().name != 'MainThread':
+            name += '|' + threading.current_thread().name
+        address = tunnel_address(self._token.address)
+        conn = self._Client(address, authkey=self._authkey)
+        dispatch(conn, None, 'accept_connection', (name,))
+        self._tls.connection = conn
 
     def _callmethod(self, methodname, args=None, kwds=None):
         """
@@ -1190,6 +1306,8 @@ class OpenMDAO_Proxy(BaseProxy):
             try:
                 proxytype = self._manager._registry[token.typeid][-1]
             except KeyError:
+                proxytype = None
+            if proxytype is None:
                 self._manager.register(token.typeid, None, _auto_proxy)
                 proxytype = self._manager._registry[token.typeid][-1]
 
@@ -1233,7 +1351,7 @@ class OpenMDAO_Proxy(BaseProxy):
                 except Exception:
                     pass
             raise RuntimeError(msg)
-        
+
         self._tls.session_key = key_pair.decrypt(server_data[1])
 
     def _incref(self):
@@ -1243,7 +1361,7 @@ class OpenMDAO_Proxy(BaseProxy):
         """
         # Hard to cause this to happen.
         if not OpenMDAO_Proxy.manager_is_alive(self._token.address):  #pragma no cover
-            raise RuntimeError('Cannot connect to manager at %r' 
+            raise RuntimeError('Cannot connect to manager at %r'
                                % (self._token.address,))
 
         conn = _get_connection(self._Client, self._token.address, self._authkey)
@@ -1317,6 +1435,7 @@ class OpenMDAO_Proxy(BaseProxy):
             elif addr_type == 'AF_UNIX':
                 sock = socket.socket(socket.AF_UNIX)
 
+            address = tunnel_address(address)
             try:
                 sock.connect(address)
             except socket.error as exc:
@@ -1465,8 +1584,13 @@ def _auto_proxy(token, serializer, manager=None, authkey=None,
     """
     ProxyType = _make_proxy_type('OpenMDAO_AutoProxy[%s]' % token.typeid,
                                  exposed)
-    proxy = ProxyType(token, serializer, manager=manager, authkey=authkey,
-                      incref=incref, pubkey=pubkey)
+    try:
+        proxy = ProxyType(token, serializer, manager=manager, authkey=authkey,
+                          incref=incref, pubkey=pubkey)
+    except Exception:
+        logging.exception('Auto proxy creation failed for %s at %s:',
+                          token.typeid, token.address)
+        raise
     proxy._isauto = True
     return proxy
 
@@ -1476,6 +1600,7 @@ def _get_connection(_client, address, authkey):
     Get client connection to `address` using `authkey`.
     Avoids dying on 'Interrupted system call'. (Should be in lower layer)
     """
+    address = tunnel_address(address)
     for retry in range(3):
         try:
             conn = _client(address, authkey=authkey)

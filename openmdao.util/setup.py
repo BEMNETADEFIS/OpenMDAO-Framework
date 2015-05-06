@@ -1,7 +1,8 @@
 
 # pylint: disable-msg=F0401
 
-import os,sys
+import os
+import sys
 from setuptools import setup, find_packages
 
 here = os.path.dirname(os.path.realpath(__file__))
@@ -22,7 +23,7 @@ setup(name='openmdao.util',
       keywords='',
       author='',
       author_email='',
-      url='http://openmdao.org/docs/srcdocs/packages/openmdao.util.html',
+      url='http://openmdao.org',
       license='Apache License, Version 2.0',
       namespace_packages=["openmdao"],
       packages=find_packages('src'),
@@ -35,15 +36,21 @@ setup(name='openmdao.util',
       zip_safe=False,
       install_requires=[
           'setuptools',
-          'pycrypto',
+          'pycrypto==2.3',
           'pyparsing',
-          'Traits==3.3.0',
+          'Traits==4.3.0',
           #'PyYAML==3.09',
       ],
-      entry_points = """
+      entry_points="""
       [console_scripts]
       xyplot=openmdao.util.casedb:cmdlineXYplot
+      plotgraph=openmdao.util.graphplot:main
+      dotgraph=openmdao.util.dotgraph:main
       add_reqs=openmdao.util.addreqs:add_reqs
       mkpseudo=openmdao.util.mkpseudo:mkpseudo
+      envdump=openmdao.util.envirodump:envdump
+      pstadump=openmdao.util.dep:main
+      update_libpath=openmdao.util.lib:update_libpath
+      combine_paths=openmdao.util.lib:combine_paths
       """
-    )
+      )

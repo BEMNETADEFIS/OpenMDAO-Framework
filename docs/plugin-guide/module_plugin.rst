@@ -8,9 +8,8 @@
 Building a Component Plugin
 ===========================
 
-For this example we'll build a plugin for the component shown in the figure
-:ref:`Conceptual-View-of-a-Simple-Component` in the introduction to the framework. This component
-simply computes the value of its single output by adding its two inputs.
+For this example we'll build a plugin for a simple component. This component
+merely computes the value of its single output by adding its two inputs.
 
 These instructions apply to any plugin component distribution that is pure
 Python, i.e., not containing any Python extensions.  They will also work with file
@@ -122,7 +121,7 @@ following files found in our distribution directory:
     possible to add some unit tests for our plugin.
     
 
-.. __: http://docs.python.org/distutils/sourcedist.html#the-manifest-in-template
+.. __: https://docs.python.org/2/distutils/sourcedist.html#the-manifest-in-template
 
 
 The following sections describe how to edit these files in more detail.
@@ -264,7 +263,7 @@ case looks like this:
     provides-dist = 
     obsoletes-dist = 
     requires-python = 
-        >=2.6
+        >=2.7
         <3.0
     requires-externals = 
     project-url = 
@@ -277,7 +276,7 @@ case looks like this:
 
 
 You should set whatever of these values you feel are applicable to your plugin.
-The **name** and **version** values are the only ones that are mandatory, but
+The *name* and *version* values are the only ones that are mandatory, but
 you should fill in as many as possible to better inform potential users about
 your plugin. 
 
@@ -293,10 +292,9 @@ your plugin.
     already works with their code. 
 
 
-More descriptions of the various metadata values can be found 
-`here`__.
+More descriptions of the various metadata values can be found `here`__.
 
-.. __: http://readthedocs.org/docs/distutils2/en/latest/setupcfg.html#metadata
+.. __: http://alexis.notmyidea.org/distutils2/setupcfg.html
 
 
 The values in the *metadata* section are specified by **PEP 345** and 
@@ -332,7 +330,7 @@ distribution using the standard Python packaging procedure, for example:
     python setup.py sdist
 
 
-That will create a source distribution of your plugin, but keep in mind that
+That will create a source distribution of your plugin; but keep in mind that
 in this case you will have to specify entry point metadata in the ``setup.py``
 file manually for each of your plugins. To specify entry points
 manually, you must add an ``entry_points`` keyword argument to the ``setup``
@@ -390,14 +388,14 @@ command.
    directory.
    
 
-We can view the docs for a plugin using the ``plugin docs`` command.  Note 
+We can view the docs for a plugin using the ``openmdao docs`` command.  Note 
 that this only works for installed plugin distributions.
 
 .. program:: plugin_docs
 
 ::
 
-   plugin docs plugin_dist_name
+   openmdao docs plugin_dist_name
    
    
 .. option:: plugin_dist_name
@@ -413,7 +411,7 @@ our docs efficiently by repeating the following sequence:
 
     ... hack, hack, hack
     plugin build_docs
-    plugin docs <plugin_dist_name>
+    openmdao docs <plugin_dist_name>
     
     
 .. index:: creation

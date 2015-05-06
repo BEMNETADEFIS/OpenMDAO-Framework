@@ -1,5 +1,5 @@
 """
-Routines to help out with obtaining debugging information
+Routines to help obtain debugging information.
 """
 
 import os
@@ -7,6 +7,16 @@ import sys
 import re
 import linecache
 import StringIO
+
+from openmdao.util.log import logger, LOG_DEBUG
+
+
+def strict_chk_config(strict):
+    """check_config methods should call this to determine if they
+    should run in strict mode or not.
+    """
+    return strict or os.environ.get('OPENMDAO_STRICT_CONFIG')
+
 
 def traceit(frame, event, arg):
     """A function useful for tracing Python execution. Wherever you want the 
@@ -51,12 +61,17 @@ def dumpit(obj, stream=sys.stdout, recurse=True, ignore_address=True):
 
     _dumpit(obj, stream, recurse, 0, set(), ignore_address)
 
-    
-class _objdiff(object):
-    def __init__(self, o1names, o2names, diffdict):
-        self.o1names = o1names
-        self.o2names = o2names
-        self.diffdict = diffdict
+
+debug = os.environ.get('OPENMDAO_DEBUG', '').strip()
+if debug and debug.lower() not in ['0', 'false']:
+    logger.setLevel(LOG_DEBUG)
+    DEBUG = logger.debug
+    debug = True
+else:
+    debug = False
+    def DEBUG(msg):
+        pass
+
 
 def print_funct_call(funct, *args, **kwargs):
     def quote_if_str(obj):
@@ -70,11 +85,10 @@ def print_funct_call(funct, *args, **kwargs):
     for i,arg in enumerate(args):
         if i>0: s.write(',')
         s.write(quote_if_str(arg))
-    if len(args) > 0:
+    if len(args) > 0 and len(kwargs) > 0:
         s.write(', ')
     for j,tup in enumerate(kwargs.items()):
         if j>0: s.write(', ')
         s.write("%s=%s" % (tup[0], quote_if_str(tup[1])))
     s.write(')')
     return s.getvalue()
-    

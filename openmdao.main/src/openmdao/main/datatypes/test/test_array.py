@@ -2,11 +2,12 @@
 
 import unittest
 
-from openmdao.main.numpy_fallback import array
+from numpy import array
 
 from openmdao.main.api import Component
 from openmdao.main.datatypes.array import Array
 from openmdao.units import convert_units
+from openmdao.main.case import flatten_obj
 
 class ArrayTestCase(unittest.TestCase):
 
@@ -16,10 +17,14 @@ class ArrayTestCase(unittest.TestCase):
         self.hobj.add('arr1',Array(array([98.9]), iotype='in', units='ft'))
         self.hobj.add('arr2', Array(array([13.2]), iotype='out', units='inch'))
         self.hobj.add('arr3', Array(iotype='in', units='kg', desc='stuff'))
+        self.hobj.add('arr98', Array(iotype='in'))
+        self.hobj.add('arr99', Array(iotype='in'))
         
         self.hobj.arr1 = [1.0, 2.0, 3.0]
         self.hobj.arr2 = [[1.,2.],[3.,4.]]
         self.hobj.arr3 = [1.1]
+        self.hobj.arr98 = [[0., 1., 0.1944, 0.1944], [0., 33., 1., 0.]];
+        self.hobj.arr99 = [[0, 1, 0.1944, 0.1944], [0, 0, 1, 0]]
                        
         
     def tearDown(self):
@@ -49,21 +54,6 @@ class ArrayTestCase(unittest.TestCase):
         self.assertAlmostEqual(12., self.hobj.arr2[0], 5)
         self.assertAlmostEqual(24., self.hobj.arr2[1], 5)
         self.assertAlmostEqual(36., self.hobj.arr2[2], 5)
-
-    def test_unit_conversion(self):
-        self.hobj.arr1 = [1.,2.,3.]
-        self.hobj.arr2 = self.hobj.get_wrapped_attr('arr1')
-        self.assertAlmostEqual(12., self.hobj.arr2[0])
-        self.assertAlmostEqual(24., self.hobj.arr2[1])
-        self.assertAlmostEqual(36., self.hobj.arr2[2])
-        
-        # unit to unitless
-        self.hobj.add('arr5', Array(iotype='in'))
-        self.hobj.arr5 = [1., 2., 4.]
-        self.hobj.arr2 = self.hobj.get_wrapped_attr('arr5')
-        self.assertAlmostEqual(1., self.hobj.arr2[0])
-        self.assertAlmostEqual(2., self.hobj.arr2[1])
-        self.assertAlmostEqual(4., self.hobj.arr2[2])
         
     def test_bogus_units(self):
         try:
@@ -86,17 +76,6 @@ class ArrayTestCase(unittest.TestCase):
         f1 = Array([3.])
         d1 = f1.default_value/2
         self.assertAlmostEqual(d1[0], 1.5, places=4)
-        
-    def test_bad_connection(self):
-        srcwrapper = self.hobj.get_wrapped_attr('arr2')
-        self.hobj.arr1 = srcwrapper
-        try:
-            self.hobj.arr3 = srcwrapper
-        except Exception, err:
-            self.assertEqual(str(err), 
-                "arr3: units 'inch' are incompatible with assigning units of 'kg'")
-        else:
-            self.fail('Exception expected')
 
     def test_constructor_defaults(self):
         
@@ -140,7 +119,16 @@ class ArrayTestCase(unittest.TestCase):
         else:
             self.fail('ValueError expected')
             
-        
+    def test_flatten(self):
+        a = array([[1,2],[3,4],[5,6]])
+        self.assertEqual(flatten_obj('foo',a), 
+                         [('foo[0][0]',1),
+                          ('foo[0][1]',2),
+                          ('foo[1][0]',3),
+                          ('foo[1][1]',4),
+                          ('foo[2][0]',5),
+                          ('foo[2][1]',6),])
+                
 if __name__ == "__main__":
     unittest.main()
 

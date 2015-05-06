@@ -26,11 +26,11 @@ component.
     class MIMOSystem(Component):
         """ Two equations, two unknowns """
         
-        x = Float(10.0, iotype="in", doc="Input 1")
-        y = Float(10.0, iotype="in", doc="Input 2")
+        x = Float(10.0, iotype="in", desc="Input 1")
+        y = Float(10.0, iotype="in", desc="Input 2")
         
-        f_xy = Float(0.0, iotype="out", doc="Output 1")
-        g_xy = Float(0.0, iotype="out", doc="Output 2")
+        f_xy = Float(0.0, iotype="out", desc="Output 1")
+        g_xy = Float(0.0, iotype="out", desc="Output 2")
         
         def execute(self):
             """ Evaluate:
@@ -63,12 +63,7 @@ equations defined in MIMOSystem.
     class SolutionAssembly(Assembly):
         """ Solves for the root of MIMOSystem. """
     
-        def __init__(self):
-            """ Creates a new Assembly with this problem
-            root at (0,1)
-            """
-            
-            super(SolutionAssembly, self).__init__()    
+        def configure(self):
             
             self.add('driver', BroydenSolver())
             self.add('problem', MIMOSystem())
@@ -112,7 +107,7 @@ Five parameters control the solution process in the BroydenSolver.
   SciPy's nonlinear package contained several algorithms for solving
   a set of nonlinear equations. Three of these methods were considered by their
   developers to be of good quality, so those three were implemented as part of 
-  the BroydenSolver. The variable ``algorithm`` is an Enum where the following values
+  the BroydenSolver. The variable `algorithm` is an Enum where the following values
   represent the algorithms that follow.
 
 - ``broyden2``: Broyden's second method -- the same as ``broyden1`` but
@@ -123,7 +118,7 @@ Five parameters control the solution process in the BroydenSolver.
   product, thus avoiding the expensive NxN matrix multiplication. 
 - ``excitingmixing``: The excitingmixing algorithm. ``J=-1/alpha``
 
-  The default value for ``algorithm`` is ``"broyden2"``.
+  The default value for `algorithm` is ``"broyden2"``.
 
   .. testsetup:: Broyden3
 
@@ -173,5 +168,5 @@ Five parameters control the solution process in the BroydenSolver.
 
     self.driver.alphamax = 1.0
     
-*Source Documentation for broyensolver.py*
-~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~
+*Source Documentation for broydensolver.py*
+~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~

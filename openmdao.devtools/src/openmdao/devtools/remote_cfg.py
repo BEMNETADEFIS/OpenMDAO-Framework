@@ -6,12 +6,12 @@ import time
 import socket
 import pprint
 
-import ConfigParser
 from multiprocessing import Process
 
 from openmdao.devtools.ec2 import run_on_ec2
 from openmdao.util.debug import print_funct_call
 from openmdao.test.testing import read_config, filter_config
+from openmdao.util.fileutil import get_cfg_file
 
 def run_on_host(host, config, conn, funct, outdir, **kwargs):
     """Runs the given funct on the specified host."""
@@ -59,7 +59,7 @@ def run_on_host(host, config, conn, funct, outdir, **kwargs):
         
 def add_config_options(parser):
     parser.add_argument("-c", "--config", action='store', dest='cfg', metavar='CONFIG',
-                        default='~/.openmdao/testhosts.cfg',
+                        default=get_cfg_file(),
                         help="Path of config file where info for hosts is located")
     parser.add_argument("--host", action='append', dest='hosts', metavar='HOST',
                         default=[],
@@ -164,7 +164,8 @@ def run_host_processes(config, conn, ec2_hosts, options, funct, funct_kwargs, do
     
     print '\nResult Summary:  Host, Return Code'
     for k,v in summary.items():
-        print '  %s, %s' % (k, v)
+        status = _check_test_output(k)
+        print '  %s, %s %s' % (k, v, status)
         
     hours, mins, secs = get_times(t1, t2)
     print '\n\nElapsed time:',
@@ -190,7 +191,6 @@ def collect_host_processes(processes, done_functs=()):
         of remaining processes still (possibly) running.
     """
     summary = {}
-    retcode = 0
     processes = processes[:]
     while len(processes) > 0:
         time.sleep(10)
@@ -203,6 +203,25 @@ def collect_host_processes(processes, done_functs=()):
                 break
             
     return summary
+
+def _check_test_output(host):
+    """ Look for final test status ('OK' or 'FAILED'). """
+    run_out = os.path.join('host_results', host, 'run.out')
+    if not os.path.exists(run_out):
+        return ''
+
+    with open(run_out, 'r') as inp:
+        lines = inp.readlines()
+
+    for line in reversed(lines):
+        if 'OK' in line:
+            i = line.index('OK')
+            return line[i:].strip()
+        elif 'FAILED' in line:
+            i = line.index('FAILED')
+            return line[i:].strip()
+
+    return 'Test status not found'
 
 def start_host_processes(config, conn, ec2_hosts, options, funct, funct_kwargs):
     """Start up a different process for each host in options.hosts. Hosts can

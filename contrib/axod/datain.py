@@ -21,8 +21,8 @@ if '.' not in sys.path:
 from numpy import float32, zeros, ndarray
 
 
-from openmdao.main.api import Component, set_as_top, Container
-from openmdao.lib.datatypes.api import Float, Array, Str, Int
+from openmdao.main.api import Component, Container
+from openmdao.main.datatypes.api import Float, Array, Str, Int
 
 __all__ = ('AxodCompn',)
 

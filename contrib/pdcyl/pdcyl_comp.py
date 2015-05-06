@@ -5,7 +5,7 @@ PDCYL is a structural esimation code that was pulled from ACSYNT.
 """
 
 # pylint: disable-msg=E0611,F0401
-from openmdao.lib.datatypes.api import Bool, Enum, Float, Int, Str
+from openmdao.main.datatypes.api import Bool, Enum, Float, Int, Str
 from openmdao.lib.components.api import ExternalCode
 from openmdao.main.api import FileMetadata
 from openmdao.util.filewrap import FileParser
@@ -172,10 +172,10 @@ class PdcylComp(ExternalCode):
     
 
     
-    def __init__(self, directory=''):
+    def __init__(self):
         """Constructor for the PdcylComp component"""
 
-        super(PdcylComp, self).__init__(directory)
+        super(PdcylComp, self).__init__()
 
         # External Code public variables
         self.stdin = 'PDCYL.in'
@@ -463,7 +463,5 @@ class PdcylComp(ExternalCode):
 
 if __name__ == "__main__": # pragma: no cover         
 
-    from openmdao.main.api import set_as_top
-    
-    my_comp = set_as_top(PdcylComp())
+    my_comp = PdcylComp()
     my_comp.run()

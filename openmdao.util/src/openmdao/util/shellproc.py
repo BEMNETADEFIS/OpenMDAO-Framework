@@ -6,6 +6,7 @@ import time
 
 PIPE = subprocess.PIPE
 STDOUT = subprocess.STDOUT
+DEV_NULL = 'nul:' if sys.platform == 'win32' else '/dev/null'
 
 
 class CalledProcessError(subprocess.CalledProcessError):
@@ -23,26 +24,27 @@ class CalledProcessError(subprocess.CalledProcessError):
 class ShellProc(subprocess.Popen):
     """
     A slight modification to :class:`subprocess.Popen`.
-    If `args` is a string then the ``shell`` argument is set True.
-    Updates a copy of ``os.environ`` with `env`, and opens files for any
+    If `args` is a string, then the ``shell`` argument is set True.
+    Updates a copy of ``os.environ`` with `env` and opens files for any
     stream which is a :class:`basestring`.
 
     args: string or list
         If a string, then this is the command line to execute and the
         :class:`subprocess.Popen` ``shell`` argument is set True.
-        Otherwise this is a list of arguments, the first is the command
+        Otherwise, this is a list of arguments; the first is the command
         to execute.
 
     stdin, stdout, stderr: string, file, or int
         Specify handling of corresponding stream. If a string, a file
-        of that name is opened. Otherwise see the :mod:`subprocess`
+        of that name is opened. Otherwise, see the :mod:`subprocess`
         documentation.
 
     env: dict
         Environment variables for the command.
     """
 
-    def __init__(self, args, stdin=None, stdout=None, stderr=None, env=None):
+    def __init__(self, args, stdin=None, stdout=None, stderr=None, env=None,
+                 universal_newlines=False):
         environ = os.environ.copy()
         if env:
             environ.update(env)
@@ -71,7 +73,8 @@ class ShellProc(subprocess.Popen):
         try:
             subprocess.Popen.__init__(self, args, stdin=self._inp,
                                       stdout=self._out, stderr=self._err,
-                                      shell=shell, env=environ)
+                                      shell=shell, env=environ,
+                                      universal_newlines=universal_newlines)
         except Exception:
             self.close_files()
             raise
@@ -87,7 +90,7 @@ class ShellProc(subprocess.Popen):
 
     def terminate(self, timeout=None):
         """
-        Stop child process. If `timeout` is specified then :meth:`wait` will
+        Stop child process. If `timeout` is specified, then :meth:`wait` will
         be called to wait for the process to terminate.
 
         timeout: float (seconds)
@@ -97,7 +100,7 @@ class ShellProc(subprocess.Popen):
         """
         super(ShellProc, self).terminate()
         if timeout is not None:
-            self.wait(timeout=timeout)
+            return self.wait(timeout=timeout)
 
     def wait(self, poll_delay=0., timeout=0.):
         """
@@ -142,8 +145,8 @@ class ShellProc(subprocess.Popen):
     def error_message(self, return_code):
         """
         Return error message for `return_code`.
-        The error messages are derived from the operating system definitions,
-        some programs don't necessarily return exit codes conforming to these
+        The error messages are derived from the operating system definitions.
+        Some programs don't necessarily return exit codes conforming to these
         definitions.
 
         return_code: int
@@ -173,12 +176,12 @@ def call(args, stdin=None, stdout=None, stderr=None, env=None,
     args: string or list
         If a string, then this is the command line to execute and the
         :class:`subprocess.Popen` ``shell`` argument is set True.
-        Otherwise this is a list of arguments, the first is the command
+        Otherwise, this is a list of arguments; the first is the command
         to execute.
 
     stdin, stdout, stderr: string, file, or int
         Specify handling of corresponding stream. If a string, a file
-        of that name is opened. Otherwise see the :mod:`subprocess`
+        of that name is opened. Otherwise, see the :mod:`subprocess`
         documentation.
 
     env: dict
@@ -200,17 +203,17 @@ def check_call(args, stdin=None, stdout=None, stderr=None, env=None,
                poll_delay=0., timeout=0.):
     """
     Run command with arguments.
-    If non-zero `return_code`, raises :class:`CalledProcessError`.
+    If non-zero, `return_code` raises :class:`CalledProcessError`.
 
     args: string or list
-        If a string, then this is the command line to execute and the
+        If a string, then this is the command line to execute, and the
         :class:`subprocess.Popen` ``shell`` argument is set True.
-        Otherwise this is a list of arguments, the first is the command
+        Otherwise, this is a list of arguments; the first is the command
         to execute.
 
     stdin, stdout, stderr: string, file, or int
         Specify handling of corresponding stream. If a string, a file
-        of that name is opened. Otherwise see the :mod:`subprocess`
+        of that name is opened. Otherwise, see the :mod:`subprocess`
         documentation.
 
     env: dict
